@@ -66,6 +66,16 @@ Claude Code 状态栏脚本：实时拉 MiniMax Token Plan 配额（5h / 周 / c
 
 macOS 默认环境除 `jq` 外都齐全；用 `brew install jq` 补一个。
 
+## 测试
+
+60+ 单测覆盖所有纯函数（colorize / format / sparkline / count-piece / burn-estimate）：
+
+```bash
+./tests/run_all.sh
+```
+
+测试用 `STATUSLINE_LIB_MODE=1 source statusline.sh` 注入函数，纯 bash + `set -u`，无外部依赖（jq/awk 在主流程里被测函数不会调用）。开发新功能时遵循 TDD：先在 `tests/test_xxx.sh` 写测试 → 跑通 → 实现。
+
 ## 工作原理
 
 - **stdin**：每次 Claude Code tick 调用一次，注入 session JSON；提取 `model.display_name` + `context_window.used_tokens/max_tokens`
