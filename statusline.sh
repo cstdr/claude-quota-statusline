@@ -7,38 +7,27 @@
 #
 # 任意一个失败都不让 statusline 变空——失败的数据源静默省略，已知字段照常显示。
 # 用 bash+jq 而非 Python：起动开销更小，符合 docs 推荐的模式。
+#
+# Source 模式：STATUSLINE_LIB_MODE=1 source 此文件，只定义函数不跑主流程，给单测用。
 
 set -u  # 不要 set -e；statusline 任何非零退出都会让整条变空
 
-input=$(cat)
-MODEL=$(printf '%s' "$input" | jq -r '.model.display_name // "?"')
-
-# 一次 jq 抽 3 个字段：used_tokens / max_tokens / used_percentage 兜底
-# 注意：CC 右下角的 "X% context used" 用的是 used/max_tokens（max 是给输入的预算）
-# 而 JSON 的 used_percentage 用的是 used/total（total 包含给输出预留的部分）
-# 这里按 CC 口径计算，与右下角保持一致；字段缺失时回落到 used_percentage
-# 用 // "" 占位而非 // empty，保证 join 输出始终 3 字段
-# 分隔符用 | 而不是 tab：bash read 在 IFS 包含 whitespace 时会先剥离前导空白，
-# 导致连续空字段塌成单个，@tsv 不靠谱
-IFS='|' read -r CTX_USED CTX_MAX CTX_PCT_FALLBACK < <(
-  printf '%s' "$input" | jq -r '
-    .context_window // {} | [
-      (.used_tokens // "" | tostring),
-      (.max_tokens  // "" | tostring),
-      (.used_percentage // "" | tostring)
-    ] | join("|")
-  ' 2>/dev/null
-)
-if [[ "$CTX_USED" =~ ^[0-9]+$ ]] && [[ "$CTX_MAX" =~ ^[0-9]+$ ]] && (( CTX_MAX > 0 )); then
-  CTX_PCT=$(( CTX_USED * 100 / CTX_MAX ))
-else
-  CTX_PCT="${CTX_PCT_FALLBACK:-0}"
-fi
-
-# --- 颜色阈值（used 视角：高占用 = 红；与 ctx 同口径） ---
+# ============ 全局常量 ============
 RED='\033[31m'; YEL='\033[33m'; GRN='\033[32m'; DIM='\033[2m'; RST='\033[0m'
 
-# 输入是已用百分比；ctx / 5h / 周 都用这同一份染色，保持语义一致
+# --- MiniMax 配额（缓存 60s；跨 session 共享） ---
+# 共享：N 个 session 共读一份 cache，1 次/分钟 HTTP 覆盖所有 session
+CACHE_FILE="/tmp/claude-statusline-minimax-shared"
+CACHE_MAX_AGE=50
+# 烧速历史：账户级（API key 代表账户），所有 session 共写一份
+# 用于推算"按现在 burn rate 还能撑多久"和 sparkline 趋势
+HIST_FILE="/tmp/claude-statusline-minimax-burn"
+HIST_WINDOW_SECS=300  # 5 分钟窗口
+
+# ============ 纯函数（无副作用，可单测） ============
+
+# 用量染色（used 视角：高占用 = 红；与 ctx 同口径）
+# 阈值：≥85 红 / ≥60 黄 / 其余 绿
 colorize_used() {
   local pct="${1:-0}"
   pct="${pct%.*}"
@@ -119,14 +108,43 @@ format_burn_estimate() {
   fi
 }
 
-# --- MiniMax 配额（缓存 60s；跨 session 共享） ---
-# 共享：N 个 session 共读一份 cache，1 次/分钟 HTTP 覆盖所有 session
-CACHE_FILE="/tmp/claude-statusline-minimax-shared"
-CACHE_MAX_AGE=50
-# 烧速历史：账户级（API key 代表账户），所有 session 共写一份
-# 用于推算"按现在 burn rate 还能撑多久"
-HIST_FILE="/tmp/claude-statusline-minimax-burn"
-HIST_WINDOW_SECS=300  # 5 分钟窗口
+# --- sparkline 单字符：value 0-100 → 8 阶 block char ---
+# 阈值：0-12 / 13-25 / 26-37 / 38-50 / 51-62 / 63-75 / 76-87 / 88-100
+# 用固定 0-100 刻度（不 normalize）：USED% 本身有界 0-100，趋势对绝对值敏感无意义
+sparkline_char_for_pct() {
+  local pct="${1:-0}"
+  pct="${pct%.*}"
+  [[ -z "$pct" || "$pct" == *[!0-9]* ]] && pct=0
+  (( pct > 100 )) && pct=100
+  if   (( pct >= 88 )); then printf '█'
+  elif (( pct >= 76 )); then printf '▇'
+  elif (( pct >= 63 )); then printf '▆'
+  elif (( pct >= 51 )); then printf '▅'
+  elif (( pct >= 38 )); then printf '▄'
+  elif (( pct >= 26 )); then printf '▃'
+  elif (( pct >= 13 )); then printf '▂'
+  else                      printf '▁'
+  fi
+}
+
+# 从 HIST_FILE 读最近 N 行（按时间从旧到新），map 到 sparkline 字符串
+# $1=hist, $2=col (2=5h, 3=周), $3=count (默认 6)
+# 不足 N 个点用 ▁ pad（"0%" 表示无数据）
+format_sparkline() {
+  local hist="$1" col="$2" count="${3:-6}"
+  [[ ! -s "$hist" ]] && return
+  local out=""
+  while IFS= read -r v; do
+    [[ -z "$v" ]] && continue
+    out+=$(sparkline_char_for_pct "$v")
+  done < <(tail -n "$count" "$hist" 2>/dev/null | awk -v c="$col" '{print $c}')
+  while (( ${#out} < count )); do
+    out+="▁"
+  done
+  printf '%s' "${out:0:$count}"
+}
+
+# ============ 有副作用的函数（依赖 $CACHE_FILE / env） ============
 
 fetch_remains() {
   local token="${ANTHROPIC_AUTH_TOKEN:-${MINIMAX_API_KEY:-}}"
@@ -145,6 +163,36 @@ cache_is_stale() {
   mtime=$(stat -f %m "$CACHE_FILE" 2>/dev/null || stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0)
   (( $(date +%s) - mtime > CACHE_MAX_AGE ))
 }
+
+# ============ lib 模式（source 用于单测）============
+# 函数已全部定义；如果带 STATUSLINE_LIB_MODE=1 就 return，不跑主流程
+[[ "${STATUSLINE_LIB_MODE:-0}" == "1" ]] && return 0 2>/dev/null
+
+# ============ 主流程 ============
+input=$(cat)
+MODEL=$(printf '%s' "$input" | jq -r '.model.display_name // "?"')
+
+# 一次 jq 抽 3 个字段：used_tokens / max_tokens / used_percentage 兜底
+# 注意：CC 右下角的 "X% context used" 用的是 used/max_tokens（max 是给输入的预算）
+# 而 JSON 的 used_percentage 用的是 used/total（total 包含给输出预留的部分）
+# 这里按 CC 口径计算，与右下角保持一致；字段缺失时回落到 used_percentage
+# 用 // "" 占位而非 // empty，保证 join 输出始终 3 字段
+# 分隔符用 | 而不是 tab：bash read 在 IFS 包含 whitespace 时会先剥离前导空白，
+# 导致连续空字段塌成单个，@tsv 不靠谱
+IFS='|' read -r CTX_USED CTX_MAX CTX_PCT_FALLBACK < <(
+  printf '%s' "$input" | jq -r '
+    .context_window // {} | [
+      (.used_tokens // "" | tostring),
+      (.max_tokens  // "" | tostring),
+      (.used_percentage // "" | tostring)
+    ] | join("|")
+  ' 2>/dev/null
+)
+if [[ "$CTX_USED" =~ ^[0-9]+$ ]] && [[ "$CTX_MAX" =~ ^[0-9]+$ ]] && (( CTX_MAX > 0 )); then
+  CTX_PCT=$(( CTX_USED * 100 / CTX_MAX ))
+else
+  CTX_PCT="${CTX_PCT_FALLBACK:-0}"
+fi
 
 if cache_is_stale; then
   if data=$(fetch_remains); then
@@ -196,6 +244,10 @@ if [[ "$FIVE_REM" =~ ^[0-9]+$ ]]; then
   fi
   FIVE_EST=$(format_burn_estimate "$HIST_FILE" "$FIVE_USED" 100 "$HIST_WINDOW_SECS" 2)
   [[ -n "$FIVE_EST" ]] && FIVE_PIECE="${FIVE_PIECE} ${DIM}${FIVE_EST}${RST}"
+  if [[ "${STATUSLINE_SPARKLINE:-1}" == "1" ]]; then
+    FIVE_SPARK=$(format_sparkline "$HIST_FILE" 2 6)
+    [[ -n "$FIVE_SPARK" ]] && FIVE_PIECE="${FIVE_PIECE} ${DIM}${FIVE_SPARK}${RST}"
+  fi
 fi
 if [[ "$WEEK_REM" =~ ^[0-9]+$ ]]; then
   # 周配额有 boost：API 字段 current_weekly_remaining_percent 是以"含 boost 的 total"为分母的剩余%
@@ -219,6 +271,10 @@ if [[ "$WEEK_REM" =~ ^[0-9]+$ ]]; then
   fi
   WEEK_EST=$(format_burn_estimate "$HIST_FILE" "$WEEK_USED" "$WEEK_TOTAL" "$HIST_WINDOW_SECS" 3)
   [[ -n "$WEEK_EST" ]] && WEEK_PIECE="${WEEK_PIECE} ${DIM}${WEEK_EST}${RST}"
+  if [[ "${STATUSLINE_SPARKLINE:-1}" == "1" ]]; then
+    WEEK_SPARK=$(format_sparkline "$HIST_FILE" 3 6)
+    [[ -n "$WEEK_SPARK" ]] && WEEK_PIECE="${WEEK_PIECE} ${DIM}${WEEK_SPARK}${RST}"
+  fi
 fi
 
 # 把当前 FIVE_USED/WEEK_USED 写入 burn rate 历史（账户级，所有 session 共写）
