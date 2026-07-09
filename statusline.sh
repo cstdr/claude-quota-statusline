@@ -13,7 +13,9 @@
 set -u  # 不要 set -e；statusline 任何非零退出都会让整条变空
 
 # ============ 全局常量 ============
-RED='\033[31m'; YEL='\033[33m'; GRN='\033[32m'; DIM='\033[2m'; RST='\033[0m'
+# ANSI 颜色：用 $'\033...' 产生真实 ESC 字节（不是字面 \033 文本）
+# 便于函数输出被外部直接处理（如单测 strip_ansi 能匹配到 ESC 字节）
+RED=$'\033[31m'; YEL=$'\033[33m'; GRN=$'\033[32m'; DIM=$'\033[2m'; RST=$'\033[0m'
 
 # --- MiniMax 配额（缓存 60s；跨 session 共享） ---
 # 共享：N 个 session 共读一份 cache，1 次/分钟 HTTP 覆盖所有 session
@@ -144,6 +146,22 @@ format_sparkline() {
   printf '%s' "${out:0:$count}"
 }
 
+# count-based model 显示片段（如 "video 0/3 ↻ 12m"）
+# 用途：处理 general 之外的 model（如 video 是次数配额，不是百分比）
+# 入参：$1=label, $2=usage, $3=total, $4=reset_ms
+# total 缺失/0/非数字 → 返回空（不显示）
+# usage > total 等异常：仍原样显示，不替用户判断（用户能看到异常比静默更好）
+format_count_piece() {
+  local label="$1" usage="$2" total="$3" reset_ms="$4"
+  [[ -z "$total" || ! "$total" =~ ^[0-9]+$ ]] && return
+  (( total <= 0 )) && return
+  local out="${DIM}${label}${RST} ${usage}/${total}"
+  if [[ "$reset_ms" =~ ^[0-9]+$ ]] && (( reset_ms > 0 )); then
+    out="${out} $(colorize_reset "$reset_ms")↻${RST} $(format_remaining_ms "$reset_ms")"
+  fi
+  printf '%s' "$out"
+}
+
 # ============ 有副作用的函数（依赖 $CACHE_FILE / env） ============
 
 fetch_remains() {
@@ -224,6 +242,28 @@ if [[ -s "$CACHE_FILE" ]] && jq -e '.model_remains | type == "array" and length 
   ); then :; fi
 fi
 
+# 多 model 拆解：general 走 percent（已有逻辑），其他 model（如 video）走 count
+# 通过 STATUSLINE_MULTI_MODEL=0 关闭，只显示 general
+# 这里只硬编码 "video"——通用化需要知道每个 model 的语义，目前只有 video 是 count-based
+VIDEO_PIECE=""
+if [[ "${STATUSLINE_MULTI_MODEL:-1}" == "1" && -s "$CACHE_FILE" ]]; then
+  VIDEO_USAGE=""; VIDEO_TOTAL=""; VIDEO_RESET_MS=""
+  if IFS='|' read -r VIDEO_USAGE VIDEO_TOTAL VIDEO_RESET_MS < <(
+    jq -r '
+      (.model_remains // [])
+      | map(select(.model_name=="video"))
+      | .[0] // empty
+      | [
+          (.current_interval_usage_count  // "" | tostring),
+          (.current_interval_total_count  // "" | tostring),
+          (.remains_time                  // "" | tostring)
+        ]
+      | join("|")
+    ' "$CACHE_FILE" 2>/dev/null
+  ); then :; fi
+  VIDEO_PIECE=$(format_count_piece "video" "$VIDEO_USAGE" "$VIDEO_TOTAL" "$VIDEO_RESET_MS")
+fi
+
 # --- 组装输出 ---
 # CTX_PCT 已是 CC 口径的已用百分比（used / max_tokens）——越高越糟
 CTX_BAR=$(bar "$CTX_PCT")
@@ -294,4 +334,5 @@ fi
 OUTPUT="[${MODEL}] ${DIM}ctx${RST} ${CTX_COL}${CTX_BAR} ${CTX_PCT_INT}%"
 [[ -n "$FIVE_PIECE" ]] && OUTPUT="${OUTPUT} · ${FIVE_PIECE}"
 [[ -n "$WEEK_PIECE" ]] && OUTPUT="${OUTPUT} · ${WEEK_PIECE}"
+[[ -n "$VIDEO_PIECE" ]] && OUTPUT="${OUTPUT} · ${VIDEO_PIECE}"
 printf '%b\n' "$OUTPUT"
