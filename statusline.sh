@@ -11,7 +11,6 @@
 set -u  # 不要 set -e；statusline 任何非零退出都会让整条变空
 
 input=$(cat)
-SESSION_ID=$(printf '%s' "$input" | jq -r '.session_id // "unknown"')
 MODEL=$(printf '%s' "$input" | jq -r '.model.display_name // "?"')
 
 # 一次 jq 抽 3 个字段：used_tokens / max_tokens / used_percentage 兜底
