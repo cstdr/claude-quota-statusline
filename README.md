@@ -95,4 +95,4 @@ macOS 默认环境除 `jq` 外都齐全；用 `brew install jq` 补一个。
 
 ## 许可
 
-未声明 License；如需公开使用 / 二次分发，请联系作者补充。
+MIT License — 详见 [LICENSE](./LICENSE)。

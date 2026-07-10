@@ -377,3 +377,44 @@ read 后: CTX_USED="42"  CTX_MAX=""  CTX_PCT_FALLBACK=""
 | 5 | 一致；`colorize_used` 阈值（≥85 / ≥60）与 ctx 内联旧实现完全相同，等价替换；`FIVE_USED = 100 - FIVE_REM` 是简单算术 |
 | 6 | 一致；`weekly_boost_permille` 加入 jq 抽取列，`WEEK_USED` 公式按文档"方案"小节实现；boost 缺失/为 0 时回落到旧公式 |
 | 7 | 一致；`HIST_FILE` 持久化 60 条滚动；`format_burn_estimate` 用 `$col` 参数支持 5h/周两个数据列；cutoff 在 shell 算好传入 awk |
+
+## 后续：v2.3 之后的实验
+
+v2.3 首发版之后的几个功能实验，结果与决策记录于此。
+
+### 实验 A：多模型拆解（保留，默认关闭）
+
+API 实际响应里 `model_remains[]` 包含多个 model：
+
+- `general` — 现有逻辑（百分比 + reset + boost）
+- `video` — **count 语义**：`current_interval_total_count: 3` 表示 5h 最多 3 次，
+  `current_interval_usage_count: 0` 表示当前已用 0 次；周维度同理 21/0
+
+实现：新增 `format_count_piece(label, usage, total, reset_ms)`，输出 `video 0/3 ↻ 12m`。
+主流程通过 `STATUSLINE_MULTI_MODEL=1` 开关启用，**默认 0**（关闭）。
+
+理由：当前工作流 90%+ 是 `general` 配额，video 段会让 1 行变长 30% 但用不到。
+留代码 + 测试，需要时 `STATUSLINE_MULTI_MODEL=1` 一键开。
+
+### 实验 B：sparkline 趋势（已回滚）
+
+设想：6 个 block char 显示最近 6 分钟 USED% 走势，例 `▁▂▃▄▅▆`。
+
+实现完整：函数、TDD 17 用例、shellcheck 0 警告、默认开。
+
+**回滚原因**：用户实测反馈"看不出怎么用"。分析：
+
+- 5h 内 USED% 单调递增，6 分钟窗口无拐点
+- "趋势"对单调数据无信息量
+- 占 1 行 30% 长度，换 0 决策价值
+
+教训（见 memory `feature-utility-check`）：
+
+- 技术正确 ≠ 该做
+- 新 feature 前先答"用户会在什么场景下用它"
+- 答不出或场景 < 50% → 默认关 / 不做
+
+### 实验 C：单测基础设施（保留）
+
+`STATUSLINE_LIB_MODE=1 source statusline.sh` 让纯函数可单测。
+`tests/run_all.sh` 跑所有 test_*.sh。当前 43 用例全过。
