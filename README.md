@@ -24,6 +24,8 @@ Claude Code 状态栏脚本：实时拉 MiniMax Token Plan 配额（5h / 周 / c
 - **对话余量估算**（`≈Xh / ≈Ym`）：5 分钟 burn rate 窗口，账户级（所有 session 共一份历史）
 - **周配额 boost 修正**：识别 `weekly_boost_permille`，与 MiniMax dashboard 数字一致
 - **优雅降级**：stdin / API 任一失败都不让整条 statusline 变空，缺失字段静默省略
+- **多模型支持**（默认关闭）：除 `general` 外，API 还返回 `video`（count 语义，如 0/3）。
+  设置 `STATUSLINE_MULTI_MODEL=1` 启用，输出追加 `· video 0/3 ↻ 12m`
 
 ## 安装
 
@@ -68,7 +70,7 @@ macOS 默认环境除 `jq` 外都齐全；用 `brew install jq` 补一个。
 
 ## 测试
 
-60+ 单测覆盖所有纯函数（colorize / format / sparkline / count-piece / burn-estimate）：
+40+ 单测覆盖所有纯函数（colorize / format / count-piece / burn-estimate）：
 
 ```bash
 ./tests/run_all.sh
@@ -88,7 +90,7 @@ macOS 默认环境除 `jq` 外都齐全；用 `brew install jq` 补一个。
 ## 已知限制
 
 - 不支持多账号（cache 和 burn rate 文件都是单实例，假设本机单用户）
-- MiniMax 多模型中目前只看 `model_remains[].model_name == "general"`，其他 model_name 暂未拆解显示
+- 多模型支持默认关闭，需要 `STATUSLINE_MULTI_MODEL=1`；目前只支持 `video`，更多 model 需扩展 `format_count_piece`
 - 周配额的"bar"按绝对 USED 填充，不算 used/total 比例（详见 DESIGN.md「改动 6」取舍）
 
 ## 许可

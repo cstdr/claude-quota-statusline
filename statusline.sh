@@ -110,42 +110,6 @@ format_burn_estimate() {
   fi
 }
 
-# --- sparkline 单字符：value 0-100 → 8 阶 block char ---
-# 阈值：0-12 / 13-25 / 26-37 / 38-50 / 51-62 / 63-75 / 76-87 / 88-100
-# 用固定 0-100 刻度（不 normalize）：USED% 本身有界 0-100，趋势对绝对值敏感无意义
-sparkline_char_for_pct() {
-  local pct="${1:-0}"
-  pct="${pct%.*}"
-  [[ -z "$pct" || "$pct" == *[!0-9]* ]] && pct=0
-  (( pct > 100 )) && pct=100
-  if   (( pct >= 88 )); then printf '█'
-  elif (( pct >= 76 )); then printf '▇'
-  elif (( pct >= 63 )); then printf '▆'
-  elif (( pct >= 51 )); then printf '▅'
-  elif (( pct >= 38 )); then printf '▄'
-  elif (( pct >= 26 )); then printf '▃'
-  elif (( pct >= 13 )); then printf '▂'
-  else                      printf '▁'
-  fi
-}
-
-# 从 HIST_FILE 读最近 N 行（按时间从旧到新），map 到 sparkline 字符串
-# $1=hist, $2=col (2=5h, 3=周), $3=count (默认 6)
-# 不足 N 个点用 ▁ pad（"0%" 表示无数据）
-format_sparkline() {
-  local hist="$1" col="$2" count="${3:-6}"
-  [[ ! -s "$hist" ]] && return
-  local out=""
-  while IFS= read -r v; do
-    [[ -z "$v" ]] && continue
-    out+=$(sparkline_char_for_pct "$v")
-  done < <(tail -n "$count" "$hist" 2>/dev/null | awk -v c="$col" '{print $c}')
-  while (( ${#out} < count )); do
-    out+="▁"
-  done
-  printf '%s' "${out:0:$count}"
-}
-
 # count-based model 显示片段（如 "video 0/3 ↻ 12m"）
 # 用途：处理 general 之外的 model（如 video 是次数配额，不是百分比）
 # 入参：$1=label, $2=usage, $3=total, $4=reset_ms
@@ -243,10 +207,11 @@ if [[ -s "$CACHE_FILE" ]] && jq -e '.model_remains | type == "array" and length 
 fi
 
 # 多 model 拆解：general 走 percent（已有逻辑），其他 model（如 video）走 count
-# 通过 STATUSLINE_MULTI_MODEL=0 关闭，只显示 general
+# 默认关闭——video 字段存在但当前工作流用不到，避免一行太长
+# 通过 STATUSLINE_MULTI_MODEL=1 打开
 # 这里只硬编码 "video"——通用化需要知道每个 model 的语义，目前只有 video 是 count-based
 VIDEO_PIECE=""
-if [[ "${STATUSLINE_MULTI_MODEL:-1}" == "1" && -s "$CACHE_FILE" ]]; then
+if [[ "${STATUSLINE_MULTI_MODEL:-0}" == "1" && -s "$CACHE_FILE" ]]; then
   VIDEO_USAGE=""; VIDEO_TOTAL=""; VIDEO_RESET_MS=""
   if IFS='|' read -r VIDEO_USAGE VIDEO_TOTAL VIDEO_RESET_MS < <(
     jq -r '
@@ -284,10 +249,6 @@ if [[ "$FIVE_REM" =~ ^[0-9]+$ ]]; then
   fi
   FIVE_EST=$(format_burn_estimate "$HIST_FILE" "$FIVE_USED" 100 "$HIST_WINDOW_SECS" 2)
   [[ -n "$FIVE_EST" ]] && FIVE_PIECE="${FIVE_PIECE} ${DIM}${FIVE_EST}${RST}"
-  if [[ "${STATUSLINE_SPARKLINE:-1}" == "1" ]]; then
-    FIVE_SPARK=$(format_sparkline "$HIST_FILE" 2 6)
-    [[ -n "$FIVE_SPARK" ]] && FIVE_PIECE="${FIVE_PIECE} ${DIM}${FIVE_SPARK}${RST}"
-  fi
 fi
 if [[ "$WEEK_REM" =~ ^[0-9]+$ ]]; then
   # 周配额有 boost：API 字段 current_weekly_remaining_percent 是以"含 boost 的 total"为分母的剩余%
@@ -311,10 +272,6 @@ if [[ "$WEEK_REM" =~ ^[0-9]+$ ]]; then
   fi
   WEEK_EST=$(format_burn_estimate "$HIST_FILE" "$WEEK_USED" "$WEEK_TOTAL" "$HIST_WINDOW_SECS" 3)
   [[ -n "$WEEK_EST" ]] && WEEK_PIECE="${WEEK_PIECE} ${DIM}${WEEK_EST}${RST}"
-  if [[ "${STATUSLINE_SPARKLINE:-1}" == "1" ]]; then
-    WEEK_SPARK=$(format_sparkline "$HIST_FILE" 3 6)
-    [[ -n "$WEEK_SPARK" ]] && WEEK_PIECE="${WEEK_PIECE} ${DIM}${WEEK_SPARK}${RST}"
-  fi
 fi
 
 # 把当前 FIVE_USED/WEEK_USED 写入 burn rate 历史（账户级，所有 session 共写）
