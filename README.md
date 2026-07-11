@@ -5,7 +5,7 @@ Claude Code 状态栏脚本：实时拉 MiniMax Token Plan 配额（5h / 周 / c
 ## 展示
 
 ```text
-[Claude Sonnet 4.6] ctx ███░░░░░░ 35% · 5h ████░░░░░ 48% ↻ 2h13m ≈ 47m · 周 █████░░░░░ 69% ↻ 4d12h
+[Claude Sonnet 4.6] ctx ███░░░░░░ 35% · 5h ████░░░░░ 48% ↻ 2h13m ≈ 47m · 周 ███░░░░░░ 94/150 ↻ 32h7m ≈ 4h
 ```
 
 四段信息从左到右：
@@ -13,7 +13,7 @@ Claude Code 状态栏脚本：实时拉 MiniMax Token Plan 配额（5h / 周 / c
 - `[model]` — 当前 session 使用的模型名
 - `ctx X%` — 上下文窗口已用百分比（与 Claude Code 右下角口径一致）
 - `5h X% ↻ Ym ≈ Zh` — MiniMax 5h 配额：已用百分比 + 距 reset 倒计时 + 按当前 burn rate 推算的对话剩余时长
-- `周 X% ↻ Ym ≈ Zh` — MiniMax 周配额（含 boost 修正）
+- `周 X/Y ↻ Ym ≈ Zh` — MiniMax 周配额：已用 / 总额（`X/Y` 形式，boost 时总额 > 100 显式标分母；无 boost 时退化为 `X%`）+ 距 reset 倒计时 + 对话余量
 
 ## 功能
 

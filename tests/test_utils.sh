@@ -127,4 +127,22 @@ assert_eq "$(format_burn_estimate "$TMP_HIST" 40 100 300 2)" "" "窗口外 → �
 echo
 echo "------"
 echo "PASS: $PASS, FAIL: $FAIL"
+# ============ format_quota_label ============
+echo
+echo "format_quota_label:"
+# boost active (total > 100) → X/Y 显式标分母
+assert_eq "$(format_quota_label 91 150)"  "91/150"  "boost 150 → 91/150"
+assert_eq "$(format_quota_label 100 150)" "100/150" "boost 150 → 100/150"
+assert_eq "$(format_quota_label 50 1000)" "50/1000" "boost 1000 → 50/1000"
+# 无 boost (total = 100) → X%
+assert_eq "$(format_quota_label 39 100)"  "39%"     "no boost → 39%"
+assert_eq "$(format_quota_label 0 100)"   "0%"      "0% 无 boost"
+assert_eq "$(format_quota_label 100 100)" "100%"    "满 100% 无 boost"
+# 边界
+assert_eq "$(format_quota_label 91 100)"  "91%"     "total=100（不含 boost）→ 91%"
+assert_eq "$(format_quota_label 91 101)"  "91/101"  "total=101 边界 → 91/101"
+
+echo
+echo "------"
+echo "PASS: $PASS, FAIL: $FAIL"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

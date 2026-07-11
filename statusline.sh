@@ -110,6 +110,17 @@ format_burn_estimate() {
   fi
 }
 
+# quota 已用部分显示：boost 激活时（total > 100）显示 X/Y 显式标分母，否则 X%
+# 例：boost=1500 → "91/150"；boost=1000/缺省 → "91%"
+format_quota_label() {
+  local used="$1" total="$2"
+  if (( total > 100 )); then
+    printf '%s/%s' "$used" "$total"
+  else
+    printf '%s%%' "$used"
+  fi
+}
+
 # count-based model 显示片段（如 "video 0/3 ↻ 12m"）
 # 用途：处理 general 之外的 model（如 video 是次数配额，不是百分比）
 # 入参：$1=label, $2=usage, $3=total, $4=reset_ms
@@ -268,7 +279,8 @@ if [[ "$WEEK_REM" =~ ^[0-9]+$ ]]; then
   fi
   WEEK_COL=$(colorize_used "$WEEK_USED")
   WEEK_BAR=$(bar "$WEEK_USED")
-  WEEK_PIECE="${DIM}周${RST} ${WEEK_COL}${WEEK_BAR} ${WEEK_USED}%${RST}"
+  WEEK_LABEL=$(format_quota_label "$WEEK_USED" "$WEEK_TOTAL")
+  WEEK_PIECE="${DIM}周${RST} ${WEEK_COL}${WEEK_BAR} ${WEEK_LABEL}${RST}"
   if [[ "$WEEK_RESET_MS" =~ ^[0-9]+$ ]]; then
     WEEK_RESET=$(format_remaining_ms "$WEEK_RESET_MS")
     WEEK_RESET_COL=$(colorize_reset "$WEEK_RESET_MS")

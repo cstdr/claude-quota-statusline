@@ -172,7 +172,7 @@ FIVE_PIECE="... ${FIVE_USED}% ..."
 
 ### 收益
 
-- 三段输出语义统一：`ctx X%` / `5h X%` / `周 X%` 全是"已使用"
+- 三段输出语义统一：`ctx X%` / `5h X%` / `周 X%`（无 boost）或 `周 X/Y`（boost 激活时）全是"已使用"
 - 染色逻辑收敛到一处（`colorize_used`），阈值调整只改一行
 
 ### 取舍
@@ -418,3 +418,27 @@ API 实际响应里 `model_remains[]` 包含多个 model：
 
 `STATUSLINE_LIB_MODE=1 source statusline.sh` 让纯函数可单测。
 `tests/run_all.sh` 跑所有 test_*.sh。当前 43 用例全过。
+
+### 实验 D：周配额显示改为 `X/Y` 格式（2026-07-11 改）
+
+原 `周 91%` 改成 `周 91/150`——周配额默认就有 +50% boost（dashboard 显示"总额度 150%"），
+"91%" 不标分母会让用户误以为只剩 9%，实际是 91/150 = 60.67% baseline 用掉，还剩 39%。
+
+实现：抽 `format_quota_label(used, total)` 纯函数：
+
+- `total > 100`（boost 激活）→ `X/Y` 显式标分母
+- `total == 100`（无 boost）→ `X%` 退化（避免 `91/100` 这种冗余形式）
+
+触发条件 = `WEEK_TOTAL > 100`，与 `WEEK_BOOST_PERMILLE >= 1000` 等价。
+
+视觉影响：
+
+- 之前：`周 ████░░░░░ 69% ↻ 4d12h`
+- 现在：`周 ███░░░░░░ 94/150 ↻ 32h7m`（实测，账户 boost 时）
+
+UX 取舍：dashboard 仍显示 `91%` 不标 150%，是为了简洁。我们的 statusline 多了 X/Y 是因为：
+
+1. statusline 空间比 dashboard 紧促但仍在可视范围内
+2. 标分母比让人心算"还剩多少 baseline"更友好
+
+折中：若觉得太冗长可设 `STATUSLINE_WEEK_FORMAT=pct`（未实现）回到 `X%`。
