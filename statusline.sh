@@ -257,7 +257,11 @@ if [[ "$WEEK_REM" =~ ^[0-9]+$ ]]; then
   # boost 字段缺失/为 0 时回落到基础公式（与 5h 一致）
   if [[ "$WEEK_BOOST_PERMILLE" =~ ^[0-9]+$ ]] && (( WEEK_BOOST_PERMILLE >= 1000 )); then
     WEEK_TOTAL=$(( WEEK_BOOST_PERMILLE / 10 ))
-    WEEK_USED=$(( WEEK_TOTAL - WEEK_REM * WEEK_TOTAL / 100 ))
+    # 公式：USED = TOTAL - REM% × TOTAL / 100。
+    # 用 TOTAL * (100 - REM) / 100 形式而非 (TOTAL - REM * TOTAL / 100)，
+    # 让 bash 整数除法截断发生在最后一步（避免 REM * TOTAL 中间产物被截断多 +1）。
+    # 例：REM=39, TOTAL=150 → 后者 150-58=92，前者 150×61/100=91（与 dashboard 一致）
+    WEEK_USED=$(( WEEK_TOTAL * (100 - WEEK_REM) / 100 ))
   else
     WEEK_TOTAL=100
     WEEK_USED=$(( 100 - WEEK_REM ))

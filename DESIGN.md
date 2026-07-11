@@ -207,7 +207,7 @@ API 的 `current_weekly_remaining_percent` 是以"含 boost 的 total"为分母�
 # boost_permille 1500 → total = 150%
 # USED = total - REM% × total / 100 = 150 - 54 × 150 / 100 = 150 - 81 = 69
 WEEK_TOTAL=$(( WEEK_BOOST_PERMILLE / 10 ))
-WEEK_USED=$(( WEEK_TOTAL - WEEK_REM * WEEK_TOTAL / 100 ))
+WEEK_USED=$(( WEEK_TOTAL * (100 - WEEK_REM) / 100 ))
 ```
 
 5h 没有 boost（API 没返回 `current_interval_boost_permille`），保持 `100 - REM` 不动。
@@ -363,7 +363,7 @@ read 后: CTX_USED="42"  CTX_MAX=""  CTX_PCT_FALLBACK=""
 | 3 | reset 染色 | 新增 `colorize_reset`（30min / 2h 阈值），`FIVE_PIECE` / `WEEK_PIECE` 染色 |
 | 4 | ctx CC 同口径 | 顶部 stdin 解析：改读 `used_tokens` / `max_tokens`，`used_percentage` 兜底 |
 | 5 | 5h/周 统一 used% | 删除 `colorize_remaining`，新增 `colorize_used`（与 ctx 同口径）；`FIVE_USED = 100 - FIVE_REM`；bar/% 都用 USED |
-| 6 | 周配额 boost 修正 | jq 多抽 `weekly_boost_permille`；`WEEK_USED = WEEK_TOTAL - WEEK_REM × WEEK_TOTAL / 100`，`WEEK_TOTAL = boost / 10` |
+| 6 | 周配额 boost 修正 | jq 多抽 `weekly_boost_permille`；`WEEK_USED = WEEK_TOTAL × (100 - WEEK_REM) / 100`，`WEEK_TOTAL = boost / 10` |
 | 7 | 对话余量估算 | 新增 `HIST_FILE`（账户级，跨 session）；`format_burn_estimate` 从最近 5min 数据点推算；POSIX `>>` 原子写不需要 flock；cutoff 时间戳从 shell 传入（macOS BSD awk 无 systime） |
 
 ## 评审对照
