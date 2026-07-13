@@ -45,6 +45,29 @@ assert_eq "$(marker_pos 1        18000000 8)" "7" "reset≈0/5h → marker=7（�
 # elapsed = (604.8M - 302.4M) × 100 / 604.8M = 50；marker = 50 × 8 / 100 = 4
 assert_eq "$(marker_pos 302400000 604800000 8)" "4" "周 3.5d/7d → marker=4"
 
+# ============ elapsed_pct ============
+echo
+echo "elapsed_pct:"
+
+# 不画条件（与 marker_pos 对齐）→ 空
+assert_eq "$(elapsed_pct ''     18000000)" "" "空 reset_ms → 空"
+assert_eq "$(elapsed_pct 0       18000000)" "" "reset=0 → 空"
+assert_eq "$(elapsed_pct 18000000 18000000)" "" "reset=period → 空"
+assert_eq "$(elapsed_pct 20000000 18000000)" "" "reset>period → 空"
+assert_eq "$(elapsed_pct 7200000  0       )" "" "period=0 → 空"
+
+# 正常情况
+# (18M - 7.2M) × 100 / 18M = 60
+assert_eq "$(elapsed_pct 7200000  18000000)" "60" "reset=2h/5h → 60"
+# (18M - 12.6M) × 100 / 18M = 30
+assert_eq "$(elapsed_pct 12600000 18000000)" "30" "reset=3.5h/5h → 30"
+# (18M - 1) × 100 / 18M = 99
+assert_eq "$(elapsed_pct 1        18000000)" "99" "reset≈0/5h → 99（不是 100）"
+
+# 周周期
+# (604.8M - 302.4M) × 100 / 604.8M = 50
+assert_eq "$(elapsed_pct 302400000 604800000)" "50" "周 3.5d/7d → 50"
+
 echo
 echo "------"
 echo "PASS: $PASS, FAIL: $FAIL"

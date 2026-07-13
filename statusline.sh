@@ -81,6 +81,21 @@ marker_pos() {
   printf '%d' "$pos"
 }
 
+# time marker elapsed 百分比：相对周期长度，走了多少 %
+# 不画条件与 marker_pos 对齐（缺失/越界 → 空）
+elapsed_pct() {
+  local reset_ms="$1" period_ms="$2"
+  [[ ! "$reset_ms"  =~ ^[0-9]+$ ]] && return
+  [[ ! "$period_ms" =~ ^[0-9]+$ ]] && return
+  (( reset_ms <= 0 ))      && return
+  (( period_ms <= 0 ))     && return
+  (( reset_ms >= period_ms )) && return
+  local pct=$(( (period_ms - reset_ms) * 100 / period_ms ))
+  (( pct <= 0 ))   && return
+  (( pct >= 100 )) && return
+  printf '%d' "$pct"
+}
+
 # 毫秒倒计时 → "XhYm" / "Ym" / "<1m"
 # 5h 区间 remains_time 最大 ≈ 18000000ms；显示精度到分钟
 format_remaining_ms() {
