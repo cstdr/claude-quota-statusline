@@ -22,6 +22,17 @@ assert_eq() {
   fi
 }
 
+assert_match() {
+  local actual="$1" pattern="$2" desc="$3"
+  if [[ "$actual" =~ $pattern ]]; then
+    PASS=$((PASS+1))
+    printf '  \033[32m✓\033[0m %s\n' "$desc"
+  else
+    FAIL=$((FAIL+1))
+    printf '  \033[32m✗\033[0m %s\n     pattern: %s\n     got:     %q\n' "$desc" "$pattern" "$actual" >&2
+  fi
+}
+
 # ============ marker_pos ============
 echo "marker_pos:"
 
@@ -109,6 +120,42 @@ assert_eq "$actual" "$expected" "marker=1 → pre 1 char，post 6 char（REPLACE
 actual=$(overlay_marker "▆▆▆▆▆▆▆▆" 7 8 "$GRN_CODE")
 expected="${GRN_CODE}▆▆▆▆▆▆▆${RST_CODE}${DIM_CODE}┊${RST_CODE}${GRN_CODE}${RST_CODE}"
 assert_eq "$actual" "$expected" "marker=7 → pre 7 char，post 0 char（REPLACE 丢 1 char）"
+
+# ============ format_delta_piece ============
+echo
+echo "format_delta_piece:"
+
+# 颜色码
+GRN_CODE=$'\033[32m'
+YEL_CODE=$'\033[33m'
+RED_CODE=$'\033[31m'
+RST_CODE=$'\033[0m'
+
+extract_color() {
+  if   [[ "$1" == *"$RED_CODE"* ]]; then echo "RED"
+  elif [[ "$1" == *"$YEL_CODE"* ]]; then echo "YEL"
+  elif [[ "$1" == *"$GRN_CODE"* ]]; then echo "GRN"
+  else                                   echo "NONE"
+  fi
+}
+
+# 正 / 负 / 零
+assert_match "$(format_delta_piece 45 50)"  '^.*↑\+45%.*$'   "delta=+45 → ↑+45%"
+assert_match "$(format_delta_piece -30 30)" '^.*↓-30%.*$'   "delta=-30 → ↓-30%"
+assert_match "$(format_delta_piece 0  60)"  '^.*↓0%.*$'     "delta=0 → ↓0%（不是 →）"
+
+# color 跟随 used% 阈值（与 colorize_used 一致：≥85 红 / ≥60 黄 / 其余 绿）
+assert_eq "$(extract_color "$(format_delta_piece 10 30)")"  "GRN" "used=30 → 绿"
+assert_eq "$(extract_color "$(format_delta_piece 10 60)")"  "YEL" "used=60 → 黄（下界）"
+assert_eq "$(extract_color "$(format_delta_piece 10 84)")"  "YEL" "used=84 → 黄（上界）"
+assert_eq "$(extract_color "$(format_delta_piece 10 85)")"  "RED" "used=85 → 红（下界）"
+assert_eq "$(extract_color "$(format_delta_piece 10 100)")" "RED" "used=100 → 红"
+
+# 数字正负号 + 内容正确
+actual=$(format_delta_piece 45 75)
+assert_match "$actual" '↑\+45%' "↑+45% 字面值正确"
+actual=$(format_delta_piece -12 25)
+assert_match "$actual" '↓-12%' "↓-12% 字面值正确（负号不是短横）"
 
 echo
 echo "------"

@@ -113,6 +113,22 @@ overlay_marker() {
   printf '%s%s%s%s%s%s%s%s%s' "$bar_color" "$pre" "$RST" "$DIM" '┊' "$RST" "$bar_color" "$post" "$RST"
 }
 
+# Δ 差值显示：↑+N% / ↓-N% / ↓0%
+# color 跟 used%（与 bar 一致）
+# delta_pct=0 也保留 ↓ 箭头（便于扫读，与 spec 一致）
+format_delta_piece() {
+  local delta="$1" used_pct="$2"
+  local col
+  col=$(colorize_used "$used_pct")
+  if (( delta > 0 )); then
+    printf '%s↑+%d%%%s' "$col" "$delta" "$RST"
+  else
+    # delta <= 0 都用 ↓（包含 0 持平、负数慢烧）
+    # 用 delta 原值（已含负号）
+    printf '%s↓%d%%%s' "$col" "$delta" "$RST"
+  fi
+}
+
 # 毫秒倒计时 → "XhYm" / "Ym" / "<1m"
 # 5h 区间 remains_time 最大 ≈ 18000000ms；显示精度到分钟
 format_remaining_ms() {
