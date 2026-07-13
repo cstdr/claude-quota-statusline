@@ -58,31 +58,9 @@ bar() {
   printf '%s' "${f// /█}${e// /░}"
 }
 
-# time marker 位置：reset_ms 相对 period_ms 的 elapsed 百分比，按 width 量化
-# 返回 0..width 之间的整数；满足任一“不画”条件返回空串
-# 不画条件（与 spec 一致）：reset_ms 缺失/非数字/<=0/>=period/period<=0
-marker_pos() {
-  local reset_ms="$1" period_ms="$2" width="$3"
-  # 类型 / 范围检查
-  [[ ! "$reset_ms"  =~ ^[0-9]+$ ]] && return
-  [[ ! "$period_ms" =~ ^[0-9]+$ ]] && return
-  (( reset_ms <= 0 ))      && return
-  (( period_ms <= 0 ))     && return
-  (( reset_ms >= period_ms )) && return
-  # 算 elapsed_pct（先乘后除，避大数截断）
-  local elapsed_pct=$(( (period_ms - reset_ms) * 100 / period_ms ))
-  # 边界：刚好 0% 或 100% 不画（marker 在边沿没有信息量）
-  (( elapsed_pct <= 0 ))   && return
-  (( elapsed_pct >= 100 )) && return
-  local pos=$(( elapsed_pct * width / 100 ))
-  # 防御性 clamp（理论上已经在 0..width 范围内）
-  (( pos <= 0 ))    && return
-  (( pos >= width )) && return
-  printf '%d' "$pos"
-}
-
 # time marker elapsed 百分比：相对周期长度，走了多少 %
-# 不画条件与 marker_pos 对齐（缺失/越界 → 空）
+# 不画条件（与 spec 一致）：reset_ms 缺失/非数字/<=0/>=period/period<=0/边界
+# 返回 1..99 整数；任一不满足返回空串
 elapsed_pct() {
   local reset_ms="$1" period_ms="$2"
   [[ ! "$reset_ms"  =~ ^[0-9]+$ ]] && return
@@ -91,9 +69,26 @@ elapsed_pct() {
   (( period_ms <= 0 ))     && return
   (( reset_ms >= period_ms )) && return
   local pct=$(( (period_ms - reset_ms) * 100 / period_ms ))
+  # 边界：刚好 0% 或 100% 不画（marker 在边沿没有信息量；Δ 也隐）
   (( pct <= 0 ))   && return
   (( pct >= 100 )) && return
   printf '%d' "$pct"
+}
+
+# time marker 位置：reset_ms 相对 period_ms 的 elapsed 百分比，按 width 量化
+# 返回 1..width-1 整数；任一"不画"条件返回空串（与 elapsed_pct 共用同一组条件）
+# 不画条件与 elapsed_pct 对齐 ⇒ 主流程可以把 ┊ 和 Δ 共同 gate 在 marker_pos 上
+marker_pos() {
+  local reset_ms="$1" period_ms="$2" width="$3"
+  local pct
+  pct=$(elapsed_pct "$reset_ms" "$period_ms") || return
+  [[ -z "$pct" ]] && return
+  local pos=$(( pct * width / 100 ))
+  # 1..width-1 量化后可能落到 0（elapsed=1..12% for width=8）—— 视为不可画
+  # 这与 spec "marker_pos>0 才画" 条件一致；主流程同时 gate Δ 在 marker_pos 上
+  (( pos <= 0 ))    && return
+  (( pos >= width )) && return
+  printf '%d' "$pos"
 }
 
 # 在 bar_str 的 marker_pos 位置替换 dim 灰 ┊
@@ -340,9 +335,9 @@ if [[ "$FIVE_REM" =~ ^[0-9]+$ ]]; then
     FIVE_RESET_COL=$(colorize_reset "$FIVE_RESET_MS")
     FIVE_PIECE="${FIVE_PIECE} ${FIVE_RESET_COL}↻${RST} ${FIVE_RESET}"
   fi
-  # Δ 差值（reset_ms 缺失/越界时不显）
-  FIVE_ELAPSED_PCT=$(elapsed_pct "$FIVE_RESET_MS" "$PERIOD_5H_MS")
-  if [[ -n "$FIVE_ELAPSED_PCT" ]]; then
+  # Δ 差值（与 ┊ 同一 gate：marker_pos 为空 ⇒ Δ 也不显；满足 spec "5 条件才显"）
+  if [[ -n "$FIVE_MARKER_POS" ]]; then
+    FIVE_ELAPSED_PCT=$(elapsed_pct "$FIVE_RESET_MS" "$PERIOD_5H_MS")
     FIVE_DELTA=$(format_delta_piece $(( FIVE_USED - FIVE_ELAPSED_PCT )) "$FIVE_USED")
     FIVE_PIECE="${FIVE_PIECE} ${FIVE_DELTA}"
   fi
@@ -377,9 +372,9 @@ if [[ "$WEEK_REM" =~ ^[0-9]+$ ]]; then
     WEEK_RESET_COL=$(colorize_reset "$WEEK_RESET_MS")
     WEEK_PIECE="${WEEK_PIECE} ${WEEK_RESET_COL}↻${RST} ${WEEK_RESET}"
   fi
-  # Δ 差值（reset_ms 缺失/越界时不显）
-  WEEK_ELAPSED_PCT=$(elapsed_pct "$WEEK_RESET_MS" "$PERIOD_WEEK_MS")
-  if [[ -n "$WEEK_ELAPSED_PCT" ]]; then
+  # Δ 差值（与 ┊ 同一 gate：marker_pos 为空 ⇒ Δ 也不显）
+  if [[ -n "$WEEK_MARKER_POS" ]]; then
+    WEEK_ELAPSED_PCT=$(elapsed_pct "$WEEK_RESET_MS" "$PERIOD_WEEK_MS")
     WEEK_DELTA=$(format_delta_piece $(( WEEK_USED - WEEK_ELAPSED_PCT )) "$WEEK_USED")
     WEEK_PIECE="${WEEK_PIECE} ${WEEK_DELTA}"
   fi
