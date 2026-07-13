@@ -58,6 +58,29 @@ bar() {
   printf '%s' "${f// /█}${e// /░}"
 }
 
+# time marker 位置：reset_ms 相对 period_ms 的 elapsed 百分比，按 width 量化
+# 返回 0..width 之间的整数；满足任一“不画”条件返回空串
+# 不画条件（与 spec 一致）：reset_ms 缺失/非数字/<=0/>=period/period<=0
+marker_pos() {
+  local reset_ms="$1" period_ms="$2" width="$3"
+  # 类型 / 范围检查
+  [[ ! "$reset_ms"  =~ ^[0-9]+$ ]] && return
+  [[ ! "$period_ms" =~ ^[0-9]+$ ]] && return
+  (( reset_ms <= 0 ))      && return
+  (( period_ms <= 0 ))     && return
+  (( reset_ms >= period_ms )) && return
+  # 算 elapsed_pct（先乘后除，避大数截断）
+  local elapsed_pct=$(( (period_ms - reset_ms) * 100 / period_ms ))
+  # 边界：刚好 0% 或 100% 不画（marker 在边沿没有信息量）
+  (( elapsed_pct <= 0 ))   && return
+  (( elapsed_pct >= 100 )) && return
+  local pos=$(( elapsed_pct * width / 100 ))
+  # 防御性 clamp（理论上已经在 0..width 范围内）
+  (( pos <= 0 ))    && return
+  (( pos >= width )) && return
+  printf '%d' "$pos"
+}
+
 # 毫秒倒计时 → "XhYm" / "Ym" / "<1m"
 # 5h 区间 remains_time 最大 ≈ 18000000ms；显示精度到分钟
 format_remaining_ms() {
