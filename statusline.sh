@@ -331,11 +331,20 @@ if [[ "$FIVE_REM" =~ ^[0-9]+$ ]]; then
   FIVE_USED=$(( 100 - FIVE_REM ))
   FIVE_COL=$(colorize_used "$FIVE_USED")
   FIVE_BAR=$(bar "$FIVE_USED")
-  FIVE_PIECE="${DIM}5h${RST} ${FIVE_COL}${FIVE_BAR} ${FIVE_USED}%${RST}"
+  # time marker（reset_ms 缺失时 marker_pos 为空，overlay_marker 走"无 ┊"分支）
+  FIVE_MARKER_POS=$(marker_pos "$FIVE_RESET_MS" "$PERIOD_5H_MS" 8)
+  FIVE_BAR=$(overlay_marker "$FIVE_BAR" "${FIVE_MARKER_POS:-0}" 8 "$FIVE_COL")
+  FIVE_PIECE="${DIM}5h${RST} ${FIVE_BAR} ${FIVE_USED}%${RST}"
   if [[ "$FIVE_RESET_MS" =~ ^[0-9]+$ ]]; then
     FIVE_RESET=$(format_remaining_ms "$FIVE_RESET_MS")
     FIVE_RESET_COL=$(colorize_reset "$FIVE_RESET_MS")
     FIVE_PIECE="${FIVE_PIECE} ${FIVE_RESET_COL}↻${RST} ${FIVE_RESET}"
+  fi
+  # Δ 差值（reset_ms 缺失/越界时不显）
+  FIVE_ELAPSED_PCT=$(elapsed_pct "$FIVE_RESET_MS" "$PERIOD_5H_MS")
+  if [[ -n "$FIVE_ELAPSED_PCT" ]]; then
+    FIVE_DELTA=$(format_delta_piece $(( FIVE_USED - FIVE_ELAPSED_PCT )) "$FIVE_USED")
+    FIVE_PIECE="${FIVE_PIECE} ${FIVE_DELTA}"
   fi
   FIVE_EST=$(format_burn_estimate "$HIST_FILE" "$FIVE_USED" 100 "$HIST_WINDOW_SECS" 2)
   [[ -n "$FIVE_EST" ]] && FIVE_PIECE="${FIVE_PIECE} ${DIM}${FIVE_EST}${RST}"
