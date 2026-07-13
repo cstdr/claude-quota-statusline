@@ -19,11 +19,13 @@ RED=$'\033[31m'; YEL=$'\033[33m'; GRN=$'\033[32m'; DIM=$'\033[2m'; RST=$'\033[0m
 
 # --- MiniMax 配额（缓存 60s；跨 session 共享） ---
 # 共享：N 个 session 共读一份 cache，1 次/分钟 HTTP 覆盖所有 session
-CACHE_FILE="/tmp/claude-statusline-minimax-shared"
+# 允许 STATUSLINE_CACHE_FILE 覆盖（集成测试用）
+CACHE_FILE="${STATUSLINE_CACHE_FILE:-/tmp/claude-statusline-minimax-shared}"
 CACHE_MAX_AGE=50
 # 烧速历史：账户级（API key 代表账户），所有 session 共写一份
 # 用于推算"按现在 burn rate 还能撑多久"和 sparkline 趋势
-HIST_FILE="/tmp/claude-statusline-minimax-burn"
+# 允许 STATUSLINE_HIST_FILE 覆盖（集成测试用）
+HIST_FILE="${STATUSLINE_HIST_FILE:-/tmp/claude-statusline-minimax-burn}"
 HIST_WINDOW_SECS=300  # 5 分钟窗口
 
 # 配额周期长度（用于算 time marker）

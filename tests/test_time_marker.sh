@@ -18,7 +18,7 @@ assert_eq() {
     printf '  \033[32m✓\033[0m %s\n' "$desc"
   else
     FAIL=$((FAIL+1))
-    printf '  \033[32m✗\033[0m %s\n     expected: %q\n     got:      %q\n' "$desc" "$expected" "$actual" >&2
+    printf '  \033[31m✗\033[0m %s\n     expected: %q\n     got:      %q\n' "$desc" "$expected" "$actual" >&2
   fi
 }
 
@@ -29,7 +29,7 @@ assert_match() {
     printf '  \033[32m✓\033[0m %s\n' "$desc"
   else
     FAIL=$((FAIL+1))
-    printf '  \033[32m✗\033[0m %s\n     pattern: %s\n     got:     %q\n' "$desc" "$pattern" "$actual" >&2
+    printf '  \033[31m✗\033[0m %s\n     pattern: %s\n     got:     %q\n' "$desc" "$pattern" "$actual" >&2
   fi
 }
 
@@ -156,6 +156,138 @@ actual=$(format_delta_piece 45 75)
 assert_match "$actual" '↑\+45%' "↑+45% 字面值正确"
 actual=$(format_delta_piece -12 25)
 assert_match "$actual" '↓-12%' "↓-12% 字面值正确（负号不是短横）"
+
+# ============ 主流程集成测试（Δ 与 ┊ 耦合）============
+# 用临时 cache + HIST_FILE 跑 statusline.sh 主流程，验证：
+# - elapsed < 12.5%（marker_pos=0）：┊ 和 ↑/↓ 都不显（统一 gate 在 marker_pos）
+# - elapsed >= 12.5% 且 <= 87.5%：┊ 和 ↑/↓ 都显
+# - elapsed >= 87.5%（marker_pos>=width）：┊ 和 ↑/↓ 都不显
+echo
+echo "main flow integration:"
+
+# 临时 cache + HIST_FILE（自动清理）
+TMP_CACHE=$(mktemp)
+TMP_HIST=$(mktemp)
+trap 'rm -f "$TMP_CACHE" "$TMP_HIST"' EXIT
+
+# fake stdin（model + context_window）
+FAKE_STDIN='{"model":{"display_name":"opus-4"},"context_window":{"used_tokens":780000,"max_tokens":1000000}}'
+
+# 写 cache（包含 model_remains[0] = general model）
+# 5h reset = 7200000 ms (2h) → elapsed = 60% → marker_pos = 4
+# week reset = 302400000 ms (3.5d) → elapsed = 50% → marker_pos = 4
+cat > "$TMP_CACHE" <<'EOF'
+{
+  "model_remains": [
+    {
+      "model_name": "general",
+      "current_interval_remaining_percent": 26,
+      "remains_time": 7200000,
+      "current_weekly_remaining_percent": 87,
+      "weekly_remains_time": 302400000,
+      "weekly_boost_permille": 1500
+    }
+  ]
+}
+EOF
+
+# 场景 1：5h elapsed=60%（marker_pos=4）→ ┊ + ↑+14% 都显
+# （5h USED=74, elapsed=60, Δ=+14；周 USED=19, elapsed=50, Δ=-31）
+output=$(STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
+  bash "$SCRIPT_DIR/../statusline.sh" <<< "$FAKE_STDIN" 2>/dev/null)
+assert_match "$output" '┊' "5h elapsed=60% → ┊ 显"
+assert_match "$output" '↑\+1[0-9]%' "5h elapsed=60% → ↑+14% 显（Δ = 74 - 60 = +14）"
+
+# 场景 2：5h reset=17000000 (≈10% elapsed) → marker_pos=0（1-12% 量化后 0）
+#        → ┊ 隐 + ↑ 隐（spec 第 3 条件 marker_pos>0 才画）
+cat > "$TMP_CACHE" <<'EOF'
+{
+  "model_remains": [
+    {
+      "model_name": "general",
+      "current_interval_remaining_percent": 26,
+      "remains_time": 17000000,
+      "current_weekly_remaining_percent": 87,
+      "weekly_remains_time": 302400000,
+      "weekly_boost_permille": 1500
+    }
+  ]
+}
+EOF
+output=$(STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
+  bash "$SCRIPT_DIR/../statusline.sh" <<< "$FAKE_STDIN" 2>/dev/null)
+# 5h 段：marker_pos=0 → overlay_marker 走"无 ┊"分支 → 5h 段无 ┊
+# Δ：gate 在 marker_pos，marker_pos 为空 → 5h 段无 ↑/↓
+# 但周 段有 marker_pos=4 → 周 段有 ┊ + ↑+9%（19 vs 50 ⇒ +9%）
+# 所以用更细粒度断言：5h 段无 ┊、无 ↑，周 段有 ┊、有 ↑
+five_piece=$(echo "$output" | grep -oE '5h[^·]*' || true)
+week_piece=$(echo "$output" | grep -oE '周[^·]*' || true)
+# 5h 段不应含 ┊
+if [[ "$five_piece" == *"┊"* ]]; then
+  FAIL=$((FAIL+1))
+  printf '  \033[31m✗\033[0m %s\n     five_piece 含 ┊（elapsed 1-12% 不应显）\n' "5h elapsed=10% → 5h 段无 ┊" >&2
+else
+  PASS=$((PASS+1))
+  printf '  \033[32m✓\033[0m %s\n' "5h elapsed=10% → 5h 段无 ┊（marker_pos=0 gate）"
+fi
+# 5h 段不应含 ↑
+if [[ "$five_piece" == *"↑"* ]]; then
+  FAIL=$((FAIL+1))
+  printf '  \033[31m✗\033[0m %s\n     five_piece 含 ↑\n' "5h elapsed=10% → 5h 段无 ↑" >&2
+else
+  PASS=$((PASS+1))
+  printf '  \033[32m✓\033[0m %s\n' "5h elapsed=10% → 5h 段无 ↑（与 ┊ 同 gate）"
+fi
+# 周 段应有 ┊
+if [[ "$week_piece" == *"┊"* ]]; then
+  PASS=$((PASS+1))
+  printf '  \033[32m✓\033[0m %s\n' "5h elapsed=10% → 周段仍有 ┊（独立 cycle）"
+else
+  FAIL=$((FAIL+1))
+  printf '  \033[31m✗\033[0m %s\n' "5h elapsed=10% → 周段应有 ┊" >&2
+fi
+# 周 段应有 ↓-31%（19 vs 50 ⇒ -31）
+if [[ "$week_piece" == *"↓"* ]]; then
+  PASS=$((PASS+1))
+  printf '  \033[32m✓\033[0m %s\n' "5h elapsed=10% → 周段仍有 ↓（WEEK_USED=19 < elapsed=50）"
+else
+  FAIL=$((FAIL+1))
+  printf '  \033[31m✗\033[0m %s\n' "5h elapsed=10% → 周段应有 ↓" >&2
+fi
+
+# 场景 3：reset_ms 缺失（5h cache 里没有 remains_time）→ 5h 段无 ┊、无 ↑
+cat > "$TMP_CACHE" <<'EOF'
+{
+  "model_remains": [
+    {
+      "model_name": "general",
+      "current_interval_remaining_percent": 26,
+      "current_weekly_remaining_percent": 87,
+      "weekly_remains_time": 302400000,
+      "weekly_boost_permille": 1500
+    }
+  ]
+}
+EOF
+output=$(STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
+  bash "$SCRIPT_DIR/../statusline.sh" <<< "$FAKE_STDIN" 2>/dev/null)
+five_piece=$(echo "$output" | grep -oE '5h[^·]*' || true)
+# 5h 段不应含 ┊
+if [[ "$five_piece" == *"┊"* ]]; then
+  FAIL=$((FAIL+1))
+  printf '  \033[31m✗\033[0m %s\n     five_piece 含 ┊\n' "5h reset_ms 缺失 → 无 ┊" >&2
+else
+  PASS=$((PASS+1))
+  printf '  \033[32m✓\033[0m %s\n' "5h reset_ms 缺失 → 无 ┊"
+fi
+# 5h 段不应含 ↑/↓
+if [[ "$five_piece" == *"↑"* || "$five_piece" == *"↓"* ]]; then
+  FAIL=$((FAIL+1))
+  printf '  \033[31m✗\033[0m %s\n     five_piece 含 ↑/↓\n' "5h reset_ms 缺失 → 无 ↑/↓" >&2
+else
+  PASS=$((PASS+1))
+  printf '  \033[32m✓\033[0m %s\n' "5h reset_ms 缺失 → 无 ↑/↓"
+fi
 
 echo
 echo "------"
