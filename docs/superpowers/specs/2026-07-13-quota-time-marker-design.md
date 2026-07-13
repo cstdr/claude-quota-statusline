@@ -38,9 +38,12 @@
 ### 公式
 
 ```
-elapsed_pct  = (period_ms - reset_ms) / period_ms × 100
-marker_pos   = clamp(elapsed_pct × width / 100, 0, width)
-delta_pct    = used_pct - elapsed_pct    # 正=快，负=慢，0=持平
+# 顺序很关键：先乘后除，否则 (period_ms - reset_ms) / period_ms 在大数时会先截断到 0
+# 例：reset=7.2M, period=18M → (18M-7.2M) / 18M = 0 (错)
+#                                (18M-7.2M) × 100 / 18M = 60 (对)
+elapsed_pct  = (period_ms - reset_ms) × 100 / period_ms
+marker_pos   = elapsed_pct × width / 100   # bash 整数除法自然 clamp 到 [0, width]
+delta_pct    = used_pct - elapsed_pct      # 正=快，负=慢，0=持平
 ```
 
 ### 虚线显示条件（全部满足才画）
