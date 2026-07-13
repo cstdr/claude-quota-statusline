@@ -68,6 +68,48 @@ assert_eq "$(elapsed_pct 1        18000000)" "99" "reset≈0/5h → 99（不是 
 # (604.8M - 302.4M) × 100 / 604.8M = 50
 assert_eq "$(elapsed_pct 302400000 604800000)" "50" "周 3.5d/7d → 50"
 
+# ============ overlay_marker ============
+echo
+echo "overlay_marker:"
+
+# DIM 颜色码用于断言（statusline.sh 已定义 DIM=$'\033[2m'，RST=$'\033[0m'）
+DIM_CODE=$'\033[2m'
+RST_CODE=$'\033[0m'
+GRN_CODE=$'\033[32m'
+
+# marker_pos 越界 → bar 整段用 bar_color 包，无 ┊
+# 8 char bar, marker=0 → 不变
+actual=$(overlay_marker "▆▆░░░░░░" 0 8 "$GRN_CODE")
+expected="${GRN_CODE}▆▆░░░░░░${RST_CODE}"
+assert_eq "$actual" "$expected" "marker=0 → 无 ┊"
+
+# marker=width → 不变
+actual=$(overlay_marker "▆▆▆▆▆▆▆░" 8 8 "$GRN_CODE")
+expected="${GRN_CODE}▆▆▆▆▆▆▆░${RST_CODE}"
+assert_eq "$actual" "$expected" "marker=8 → 无 ┊"
+
+# marker=4 over empty（5h 持平）→ 第 5 字符是 ┊ (dim)
+# bar "▆▆▆▆░░░░" (4 filled + 4 empty)，marker=4 → "▆▆▆▆┊░░░" (replace 5th char)
+actual=$(overlay_marker "▆▆▆▆░░░░" 4 8 "$GRN_CODE")
+expected="${GRN_CODE}▆▆▆▆${RST_CODE}${DIM_CODE}┊${RST_CODE}${GRN_CODE}░░░${RST_CODE}"
+assert_eq "$actual" "$expected" "marker=4 over empty → ┊ dim，pre/post 用 bar_color"
+
+# marker=2 over filled（5h 快烧）→ 第 3 字符是 ┊ (dim)
+# bar "▆▆▆▆▆▆░░" (6 filled + 2 empty)，marker=2 → "▆▆┊▆▆▆░░" (replace 3rd char，REPLACE 模式 post=5 chars)
+actual=$(overlay_marker "▆▆▆▆▆▆░░" 2 8 "$GRN_CODE")
+expected="${GRN_CODE}▆▆${RST_CODE}${DIM_CODE}┊${RST_CODE}${GRN_CODE}▆▆▆░░${RST_CODE}"
+assert_eq "$actual" "$expected" "marker=2 over filled → ┊ dim 替换 filled 字符（REPLACE 丢 1 char）"
+
+# 边界：marker=1（最左，REPLACE 模式 post=6 chars）
+actual=$(overlay_marker "▆▆▆▆▆▆▆▆" 1 8 "$GRN_CODE")
+expected="${GRN_CODE}▆${RST_CODE}${DIM_CODE}┊${RST_CODE}${GRN_CODE}▆▆▆▆▆▆${RST_CODE}"
+assert_eq "$actual" "$expected" "marker=1 → pre 1 char，post 6 char（REPLACE 丢 1 char）"
+
+# 边界：marker=7（最右有效位，REPLACE 模式 post=0 char 即空）
+actual=$(overlay_marker "▆▆▆▆▆▆▆▆" 7 8 "$GRN_CODE")
+expected="${GRN_CODE}▆▆▆▆▆▆▆${RST_CODE}${DIM_CODE}┊${RST_CODE}${GRN_CODE}${RST_CODE}"
+assert_eq "$actual" "$expected" "marker=7 → pre 7 char，post 0 char（REPLACE 丢 1 char）"
+
 echo
 echo "------"
 echo "PASS: $PASS, FAIL: $FAIL"

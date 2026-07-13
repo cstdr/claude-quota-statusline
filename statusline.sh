@@ -96,6 +96,23 @@ elapsed_pct() {
   printf '%d' "$pct"
 }
 
+# 在 bar_str 的 marker_pos 位置替换 dim 灰 ┊
+# bar_str 来自 bar()，是纯字符（不含 ANSI）；替换后整段包上 bar_color
+# marker_pos 不在 1..width-1 → 原样包 bar_color 返回
+# REPLACE 模式：始终丢弃 bar_str[pos] 字符，插入 ┊；post 只取到 width-1 以保持总长 = width
+overlay_marker() {
+  local bar_str="$1" pos="$2" width="$3" bar_color="$4"
+  # 越界 → 不画 marker
+  if (( pos <= 0 || pos >= width )); then
+    printf '%s%s%s' "$bar_color" "$bar_str" "$RST"
+    return
+  fi
+  # 切片：pre = bar[0..pos-1]，post = bar[pos+1..width-1]（pos 位被 ┊ 替换；丢弃 bar[width-1] 保持总长 = width）
+  local pre="${bar_str:0:pos}"
+  local post="${bar_str:pos+1:width-1-pos}"
+  printf '%s%s%s%s%s%s%s%s%s' "$bar_color" "$pre" "$RST" "$DIM" '┊' "$RST" "$bar_color" "$post" "$RST"
+}
+
 # 毫秒倒计时 → "XhYm" / "Ym" / "<1m"
 # 5h 区间 remains_time 最大 ≈ 18000000ms；显示精度到分钟
 format_remaining_ms() {
