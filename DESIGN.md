@@ -315,6 +315,56 @@ burn rate 是**账户级**的，不是某个 session 的。理由：
   偶发丢 1 行（实测很难触发，POSIX rename 在 APFS 上 serialize）。影响：估算精度 ±1 个数据点，
   可接受。如果哪天丢行变成问题，再补 flock
 
+## 改动 8：5h/周进度条加 time marker 虚线 + Δ
+
+### 问题
+
+光看 used% 不知道"我烧得快不快"。例如 5h 用了 60%、剩 2h reset——
+可能你 60% 烧了 2h（理想节奏），也可能烧了 4h（很慢），也可能烧了 1h（危险）。
+但条上没时间维度，全靠用户自己心算。
+
+### 方案
+
+进度条上叠一条 dim 灰 `┊` 虚线，标"当前时间在 cycle 内走到哪"。
+
+数学（先乘后除，否则大数截断）：
+```
+elapsed_pct = (period_ms - reset_ms) × 100 / period_ms
+marker_pos  = elapsed_pct × 8 / 100
+```
+
+行末附 `↑+N%` / `↓-N%` / `↓0%` 差值（color 跟 used%）：
+
+- filled 在虚线**右** → 烧得比时间快（警惕）
+- filled 在虚线**左** → 烧得比时间慢（富裕）
+
+新增 4 个纯函数（`marker_pos` / `elapsed_pct` / `overlay_marker` / `format_delta_piece`）+ 2 常量。
+`bar()` 函数零修改 —— `overlay_marker` 把 bar 拆成 pre/post 段，让 marker 走 dim 灰、其余走 used% 颜色。
+
+### 取舍
+
+- **虚线在 filled 之上**（Y-2 模式）vs 后置隐藏（Y-1）：选 Y-2，强制可见，
+  但代价是"marker over filled"时 filled 字符被 `┊` 替换（bar 看起来"破损"）。
+  实测过：这是信息密度的必要 trade-off。
+- **只显 Δ 不显 T%**（L-4）：行长度控住；用箭头方向承载"快/慢"信息，色块承载
+  "严重程度"信息，符号 + 颜色 2 维度比纯数字更易扫读。
+- **ctx / video 不画虚线**：ctx 没有 reset 概念，video 是 count-based。
+
+### 渲染示例
+
+```
+5h 慢烧:  5h ▆▆░░┊░░░ 30% ↻ 2h ↓-30%
+5h 快烧:  5h ▆▆┊▆▆▆▆░ 75% ↻ 1h ↑+45%
+周 boost: 周 ▆▆▆▆▆▆┊░ 91/150 ↻ 4d ↑+16%
+缺数据:   5h ▆▆▆▆░░░░ 50%          (无虚线无↻无Δ)
+```
+
+### 防御层级
+
+- L1：4 个新函数全部纯函数 + `STATUSLINE_LIB_MODE=1` 可单测（`tests/test_time_marker.sh`，35 个断言）
+- L2：5 个显示条件显式检查（reset_ms 缺失/越界/边界/period 异常），任意失败回落到"无虚线"
+- L3：与 ctx / video 块完全解耦
+
 ## 踩过的坑（值得在博客里点出来）
 
 ### 坑 1：`@tsv` + `IFS=$'\t' read` 看似合理实则错
@@ -365,6 +415,7 @@ read 后: CTX_USED="42"  CTX_MAX=""  CTX_PCT_FALLBACK=""
 | 5 | 5h/周 统一 used% | 删除 `colorize_remaining`，新增 `colorize_used`（与 ctx 同口径）；`FIVE_USED = 100 - FIVE_REM`；bar/% 都用 USED |
 | 6 | 周配额 boost 修正 | jq 多抽 `weekly_boost_permille`；`WEEK_USED = WEEK_TOTAL × (100 - WEEK_REM) / 100`，`WEEK_TOTAL = boost / 10` |
 | 7 | 对话余量估算 | 新增 `HIST_FILE`（账户级，跨 session）；`format_burn_estimate` 从最近 5min 数据点推算；POSIX `>>` 原子写不需要 flock；cutoff 时间戳从 shell 传入（macOS BSD awk 无 systime） |
+| 8 | time marker 虚线 + Δ | 新增 4 个纯函数（`marker_pos` / `elapsed_pct` / `overlay_marker` / `format_delta_piece`）+ 2 常量（`PERIOD_5H_MS` / `PERIOD_WEEK_MS`）；`bar()` 零修改；主流程 5h/周 piece 各加 3 行 |
 
 ## 评审对照
 
