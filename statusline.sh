@@ -367,12 +367,21 @@ if [[ "$WEEK_REM" =~ ^[0-9]+$ ]]; then
   fi
   WEEK_COL=$(colorize_used "$WEEK_USED")
   WEEK_BAR=$(bar "$WEEK_USED")
+  # time marker（reset_ms 缺失/越界时 marker_pos 为空，overlay_marker 走"无 ┊"分支）
+  WEEK_MARKER_POS=$(marker_pos "$WEEK_RESET_MS" "$PERIOD_WEEK_MS" 8)
+  WEEK_BAR=$(overlay_marker "$WEEK_BAR" "${WEEK_MARKER_POS:-0}" 8 "$WEEK_COL")
   WEEK_LABEL=$(format_quota_label "$WEEK_USED" "$WEEK_TOTAL")
-  WEEK_PIECE="${DIM}周${RST} ${WEEK_COL}${WEEK_BAR} ${WEEK_LABEL}${RST}"
+  WEEK_PIECE="${DIM}周${RST} ${WEEK_BAR} ${WEEK_LABEL}${RST}"
   if [[ "$WEEK_RESET_MS" =~ ^[0-9]+$ ]]; then
     WEEK_RESET=$(format_remaining_ms "$WEEK_RESET_MS")
     WEEK_RESET_COL=$(colorize_reset "$WEEK_RESET_MS")
     WEEK_PIECE="${WEEK_PIECE} ${WEEK_RESET_COL}↻${RST} ${WEEK_RESET}"
+  fi
+  # Δ 差值（reset_ms 缺失/越界时不显）
+  WEEK_ELAPSED_PCT=$(elapsed_pct "$WEEK_RESET_MS" "$PERIOD_WEEK_MS")
+  if [[ -n "$WEEK_ELAPSED_PCT" ]]; then
+    WEEK_DELTA=$(format_delta_piece $(( WEEK_USED - WEEK_ELAPSED_PCT )) "$WEEK_USED")
+    WEEK_PIECE="${WEEK_PIECE} ${WEEK_DELTA}"
   fi
   WEEK_EST=$(format_burn_estimate "$HIST_FILE" "$WEEK_USED" "$WEEK_TOTAL" "$HIST_WINDOW_SECS" 3)
   [[ -n "$WEEK_EST" ]] && WEEK_PIECE="${WEEK_PIECE} ${DIM}${WEEK_EST}${RST}"
