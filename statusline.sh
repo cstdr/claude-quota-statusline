@@ -26,6 +26,14 @@ CACHE_MAX_AGE=50
 HIST_FILE="/tmp/claude-statusline-minimax-burn"
 HIST_WINDOW_SECS=300  # 5 分钟窗口
 
+# 配额周期长度（用于算 time marker）
+# 5h 区间 = 5 × 3600 × 1000 ms
+# shellcheck disable=SC2034  # Task 6-7 接入主流程前未使用
+PERIOD_5H_MS=18000000
+# 周区间 = 7 × 24 × 3600 × 1000 ms
+# shellcheck disable=SC2034  # Task 6-7 接入主流程前未使用
+PERIOD_WEEK_MS=604800000
+
 # ============ 纯函数（无副作用，可单测） ============
 
 # 用量染色（used 视角：高占用 = 红；与 ctx 同口径）
