@@ -39,7 +39,7 @@ EOF
 # 临时 HIST 是空的，所以 ≈Xh 不显 → 视觉更干净，只看 ┊ + Δ
 run_scenario() {
   local label="$1"
-  STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
+  STATUSLINE_PROVIDER=minimax STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
     bash "$ROOT/statusline.sh" <<< "$STDIN" 2>/dev/null \
     | sed "s|^|$label  |"
 }
@@ -109,9 +109,54 @@ echo "================================================================"
 echo "对照解读（只看每行的中间 '┊' 位置与末尾 ↑↓ 数字）"
 echo "================================================================"
 echo
-echo "  [1] 慢烧：┊ 在 ▆▆ 右边 + 末尾 ↓-30% / ↓-37% → 时间走得比用量快"
-echo "  [2] 持平：┊ 跟 ▆▆▆▆ 对齐 + 末尾 ↓0% / ↓0% → 用量与时间同步"
-echo "  [3] 快烧：┊ 在 ▆▆▆▆▆▆ 左边 + 末尾 ↑+45% → 用量跑赢时间"
-echo "  [4] 临界：5h 黄 红 + ↑+30% / 周 ↑+70% 红 → 双红警告"
+echo "  [1] 慢烧：┊ 在 ██ 右边 + 末尾 ↓-30% / ↓-37% → 时间走得比用量快"
+echo "  [2] 持平：┊ 跟 ████ 对齐 + 末尾 ↓0% / ↓0% → 用量与时间同步"
+echo "  [3] 快烧：┊ 在 ██████ 左边 + 末尾 ↑+45% → 用量跑赢时间"
+echo "  [4] 临界：5h 红 + ↑+30% / 周 ↑+55% → 双红警告"
 echo "  [5] 周 X/Y：91/150 显示分母 + ↑+41% 红 → 配额吃紧 + 烧快"
 echo "  [6] 缺数据：bar 完整无 ┊ 无 Δ → 数据缺失静默回落"
+
+echo
+echo "================================================================"
+echo "ASCII 视图（strip ANSI，纯粹看 layout）"
+echo "================================================================"
+echo
+
+ascii_label() {
+  local label="$1"
+  STATUSLINE_PROVIDER=minimax STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
+    bash "$ROOT/statusline.sh" <<< "$STDIN" 2>/dev/null \
+    | sed $'s/\033\\[[0-9;]*m//g' \
+    | sed "s|^|$label  |"
+}
+
+# 重跑各场景拿 ASCII 版本
+write_cache  7200000 70  302400000 87  1000
+ascii_label "[1] 5h 慢烧     "
+
+write_cache  7200000 40  302400000 50  1000
+ascii_label "[2] 5h 持平     "
+
+write_cache 12600000 25  518400000 0  1000
+ascii_label "[3] 5h 快烧     "
+
+write_cache  7200000 10  302400000 30  1500
+ascii_label "[4] 5h 临界+周 boost "
+
+write_cache 17280000  50  302400000  39  1500
+ascii_label "[5] 周 boost 高用  "
+
+cat > "$TMP_CACHE" <<'EOF'
+{
+  "model_remains": [
+    {
+      "model_name": "general",
+      "current_interval_remaining_percent": 40,
+      "current_weekly_remaining_percent": 50,
+      "weekly_remains_time": 302400000,
+      "weekly_boost_permille": 1000
+    }
+  ]
+}
+EOF
+ascii_label "[6] 5h 无 reset  "
