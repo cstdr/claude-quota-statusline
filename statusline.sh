@@ -18,16 +18,19 @@ set -u  # 不要 set -e；statusline 任何非零退出都会让整条变空
 # 便于函数输出被外部直接处理（如单测 strip_ansi 能匹配到 ESC 字节）
 RED=$'\033[31m'; YEL=$'\033[33m'; GRN=$'\033[32m'; DIM=$'\033[2m'; RST=$'\033[0m'
 
-# --- 服务商识别（kimi / minimax） ---
+# --- 服务商识别（kimi / minimax / unknown） ---
 # 依 ANTHROPIC_BASE_URL 判断配额 API 是哪家；STATUSLINE_PROVIDER 可强制覆盖（测试/调试）
-# 未知/未设 → 默认 kimi
+# 空/不认识的 URL → unknown：不往不认识的服务商转发 token（fetch 直接跳过，配额段静默省略）
 detect_provider() {
   local forced="${STATUSLINE_PROVIDER:-}"
   [[ "$forced" == "kimi" || "$forced" == "minimax" ]] && { printf '%s' "$forced"; return; }
-  case "${ANTHROPIC_BASE_URL:-}" in
+  # bash 3.2 无 ${var,,}，用 tr 归一小写，大写 host 也能识别
+  local url
+  url=$(printf '%s' "${ANTHROPIC_BASE_URL:-}" | tr '[:upper:]' '[:lower:]')
+  case "$url" in
     *kimi.com*|*moonshot*) printf 'kimi' ;;
     *minimax*)             printf 'minimax' ;;
-    *)                     printf 'kimi' ;;
+    *)                     printf 'unknown' ;;
   esac
 }
 PROVIDER="$(detect_provider)"
@@ -44,10 +47,8 @@ HIST_WINDOW_SECS=300  # 5 分钟窗口
 
 # 配额周期长度（用于算 time marker）
 # 5h 区间 = 5 × 3600 × 1000 ms
-# shellcheck disable=SC2034  # Task 6-7 接入主流程前未使用
 PERIOD_5H_MS=18000000
 # 周区间 = 7 × 24 × 3600 × 1000 ms
-# shellcheck disable=SC2034  # Task 6-7 接入主流程前未使用
 PERIOD_WEEK_MS=604800000
 
 # ============ 纯函数（无副作用，可单测） ============
@@ -251,14 +252,22 @@ kimi_fields() {
         else [0, (($t | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) - $now) * 1000] | max | tostring
         end
       ) catch "");
-    ((.limits // [])
-      | map(select(.window.duration == 300 and .window.timeUnit == "TIME_UNIT_MINUTE"))
-      | .[0].detail // {}) as $five
+    # 注意 .limits? 对类型错误产 empty（不是 null），必须再接 // [] 兜底，否则整条管道无声中断
+    ((.limits? // [] | if type == "array" then . else [] end)
+      | map(select(
+          type == "object"
+          and (.window | type == "object")
+          and .window.duration == 300
+          and .window.timeUnit == "TIME_UNIT_MINUTE"
+        ))
+      | .[0].detail // {}
+      | if type == "object" then . else {} end) as $five
+    | (.usage? // {} | if type == "object" then . else {} end) as $week
     | [
         rem_pct($five),
         reset_ms($five.resetTime),
-        rem_pct(.usage // {}),
-        reset_ms(.usage.resetTime),
+        rem_pct($week),
+        reset_ms($week.resetTime),
         ""
       ]
     | join("|")
@@ -273,9 +282,12 @@ fetch_remains() {
   if [[ "$PROVIDER" == "kimi" ]]; then
     token="${token:-${KIMI_API_KEY:-}}"
     url="${KIMI_USAGES_URL:-https://api.kimi.com/coding/v1/usages}"
-  else
+  elif [[ "$PROVIDER" == "minimax" ]]; then
     token="${token:-${MINIMAX_API_KEY:-}}"
     url="${MINIMAX_REMAINS_URL:-https://www.minimaxi.com/v1/token_plan/remains}"
+  else
+    # unknown：不认识的后端不发请求（避免把别家 token 转发给 kimi/minimax 服务器）
+    return 1
   fi
   [[ -z "$token" ]] && return 1
   curl -sS --max-time 3 \
@@ -332,16 +344,18 @@ if cache_is_stale; then
 fi
 
 # 一次 jq 抽 5 个字段：5h剩余% / 5h剩余ms / 周剩余% / 周剩余ms / boost千分比
-# Kimi 走 kimi_fields 归一；MiniMax 走 model_remains[general]
+# Kimi 走 kimi_fields 归一；MiniMax 走 model_remains[general]；unknown 不解析（cache 也不会被刷新）
 # 分隔符用 | 而不是 tab：bash read 在 IFS 包含 whitespace 时会先剥离前导空白，
 # 导致连续空字段塌成单个；用 join("|") 输出再以 IFS='|' 切分
 FIVE_REM=""; FIVE_RESET_MS=""; WEEK_REM=""; WEEK_RESET_MS=""; WEEK_BOOST_PERMILLE=""
+# USED 也要先初始化：REM 解析为空时不会进赋值分支，set -u 下未绑定会让整条 statusline 崩空
+FIVE_USED=""; WEEK_USED=""
 if [[ -s "$CACHE_FILE" ]]; then
   if [[ "$PROVIDER" == "kimi" ]]; then
     if IFS='|' read -r FIVE_REM FIVE_RESET_MS WEEK_REM WEEK_RESET_MS WEEK_BOOST_PERMILLE < <(
       kimi_fields "$(date +%s)" < "$CACHE_FILE" 2>/dev/null
     ); then :; fi
-  elif jq -e '.model_remains | type == "array" and length > 0' "$CACHE_FILE" >/dev/null 2>&1; then
+  elif [[ "$PROVIDER" == "minimax" ]] && jq -e '.model_remains | type == "array" and length > 0' "$CACHE_FILE" >/dev/null 2>&1; then
     if IFS='|' read -r FIVE_REM FIVE_RESET_MS WEEK_REM WEEK_RESET_MS WEEK_BOOST_PERMILLE < <(
       jq -r '
         (.model_remains // [])

@@ -404,14 +404,18 @@ Kimi 有等价的配额 API：`GET https://api.kimi.com/coding/v1/usages`（Bear
 - **不显示 `parallel`（并发 1/20）和 `totalQuota`**：和"额度还够烧多久"无关（"用得上吗"自检）。
 - **用 `used/limit×100` 而非直接信 `remaining` 字段**：对非 100 的 limit 鲁棒。
 - **remaining clamp [0,100]**：`used>limit`（超用）时 bar 不溢出。
-- **未知 URL 默认 kimi**：调用方主要是本仓库用户，当前后端就是 kimi；错了也只是静默省略，不炸。
+- **空/不认识的 BASE_URL → `unknown`，不发请求**：避免把别家 token 转发给 kimi/minimax 服务器
+  （评审发现；官方 Anthropic / 第三方代理用户会命中此分支，代价只是配额段不显示）。
+  `STATUSLINE_PROVIDER` 强制覆盖优先于一切。
 
 ### 防御层级
 
-- L1：`kimi_fields` 纯函数（jq + 注入 `now_epoch`），`tests/test_kimi.sh` 24 断言
-  （正常/clamp/字段缺失/resetTime 过去/非法/垃圾 JSON/非 300min 窗口）
-- L2：每个字段独立 `try/catch` 降级；整段 JSON 非法 → 全空 → piece 静默省略
-- L3：provider 错配（minimax provider + kimi cache）→ 解析为空 → 静默省略，不串渲染
+- L1：`kimi_fields` 纯函数（jq + 注入 `now_epoch`），`tests/test_kimi.sh` 35 断言
+  （正常/clamp/字段缺失/resetTime 过去/非法/垃圾 JSON/非 300min 窗口/结构级类型错误）
+- L2：值级错误逐字段 `try/catch` 降级；容器类型错误靠 `.limits? // []` + `type` gate 逐字段隔离；
+  整段 JSON 非法 → 全空 → piece 静默省略
+- L3：provider 错配（双向）→ 解析为空 → 静默省略，不串渲染；无 cache 时 `FIVE_USED/WEEK_USED`
+  预初始化保证 `set -u` 下整条不变空（评审发现的既有 bug，一并修掉）
 
 ## 踩过的坑（值得在博客里点出来）
 

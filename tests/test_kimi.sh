@@ -52,8 +52,17 @@ assert_eq "$actual" "kimi" "api.moonshot.cn → kimi"
 actual=$(ANTHROPIC_BASE_URL="https://www.minimaxi.com/anthropic" STATUSLINE_PROVIDER='' detect_provider)
 assert_eq "$actual" "minimax" "minimaxi.com → minimax"
 
+actual=$(ANTHROPIC_BASE_URL="HTTPS://API.MINIMAXI.COM/anthropic" STATUSLINE_PROVIDER='' detect_provider)
+assert_eq "$actual" "minimax" "大写 host → 照样识别 minimax（大小写不敏感）"
+
 actual=$(ANTHROPIC_BASE_URL="" STATUSLINE_PROVIDER='' detect_provider)
-assert_eq "$actual" "kimi" "BASE_URL 空 → 默认 kimi"
+assert_eq "$actual" "unknown" "BASE_URL 空 → unknown（不往不认识的服务商发 token）"
+
+actual=$(ANTHROPIC_BASE_URL="https://api.anthropic.com" STATUSLINE_PROVIDER='' detect_provider)
+assert_eq "$actual" "unknown" "不认识的 URL → unknown"
+
+actual=$(ANTHROPIC_BASE_URL="" STATUSLINE_PROVIDER="kimi" detect_provider)
+assert_eq "$actual" "kimi" "BASE_URL 空 + 强制 kimi → kimi（覆盖优先）"
 
 actual=$(ANTHROPIC_BASE_URL="https://api.kimi.com/coding/" STATUSLINE_PROVIDER="minimax" detect_provider)
 assert_eq "$actual" "minimax" "STATUSLINE_PROVIDER=minimax 覆盖 kimi URL"
@@ -126,6 +135,18 @@ assert_eq "$actual" "" "垃圾 JSON → 空输出"
 actual=$(printf '%s' '{"usage":{"limit":"100","used":"abc"},"limits":[]}' | kimi_fields "$NOW")
 assert_eq "$actual" "||||" "used 非法 → 字段空"
 
+# 结构级类型错误：usage 不是 object → 整段不崩，5h 正常解析
+actual=$(printf '%s' '{"usage":"not-an-object","limits":[{"window":{"duration":300,"timeUnit":"TIME_UNIT_MINUTE"},"detail":{"limit":"100","used":"30","resetTime":"2026-07-17T06:08:41Z"}}]}' | kimi_fields "$NOW")
+assert_eq "$actual" "70|7200000|||" "usage 是 string → 周空，5h 不受影响"
+
+# 结构级类型错误：limits 不是 array → 周字段不陪葬
+actual=$(printf '%s' '{"usage":{"limit":"100","used":"40","resetTime":"2026-07-20T04:08:41Z"},"limits":"oops"}' | kimi_fields "$NOW")
+assert_eq "$actual" "||60|259200000|" "limits 是 string → 5h 空，周不受影响"
+
+# 顶层是数组 → 全空不崩
+actual=$(printf '%s' '[1,2,3]' | kimi_fields "$NOW")
+assert_eq "$actual" "||||" "顶层非 object → 全空"
+
 # ============ 主流程集成测试（kimi provider）============
 echo
 echo "main flow integration (kimi):"
@@ -170,12 +191,55 @@ assert_match "$week_piece" '┊' "周 elapsed≈57% → ┊ 显"
 # provider=minimax + kimi cache → 解析不出 model_remains → 5h/周 piece 都不显（降级）
 output=$(STATUSLINE_PROVIDER=minimax STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
   bash "$SCRIPT_DIR/../statusline.sh" <<< "$FAKE_STDIN" 2>/dev/null)
-if [[ "$output" == *"5h"* ]]; then
+if [[ "$output" == *"5h"* || "$output" == *"周"* ]]; then
   FAIL=$((FAIL+1))
-  printf '  \033[31m✗\033[0m %s\n     got: %q\n' "minimax provider + kimi cache → 5h 不显" "$output"
+  printf '  \033[31m✗\033[0m %s\n     got: %q\n' "minimax provider + kimi cache → 5h/周 不显" "$output"
 else
   PASS=$((PASS+1))
   printf '  \033[32m✓\033[0m %s\n' "minimax provider + kimi cache → 5h/周 静默省略"
+fi
+# 同时断言主流程活着（防空输出假阳性）
+assert_match "$output" 'ctx' "错配时 ctx 段仍显示（主流程没崩）"
+
+# 反方向：provider=kimi + minimax cache → kimi_fields 解析全空 → 同样静默省略
+cat > "$TMP_CACHE" <<'EOF'
+{
+  "model_remains": [
+    {
+      "model_name": "general",
+      "current_interval_remaining_percent": 26,
+      "remains_time": 7200000,
+      "current_weekly_remaining_percent": 87,
+      "weekly_remains_time": 302400000,
+      "weekly_boost_permille": 1500
+    }
+  ]
+}
+EOF
+output=$(STATUSLINE_PROVIDER=kimi STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
+  bash "$SCRIPT_DIR/../statusline.sh" <<< "$FAKE_STDIN" 2>/dev/null)
+if [[ "$output" == *"5h"* || "$output" == *"周"* ]]; then
+  FAIL=$((FAIL+1))
+  printf '  \033[31m✗\033[0m %s\n     got: %q\n' "kimi provider + minimax cache → 5h/周 不显" "$output"
+else
+  PASS=$((PASS+1))
+  printf '  \033[32m✓\033[0m %s\n' "kimi provider + minimax cache → 5h/周 静默省略"
+fi
+assert_match "$output" 'ctx' "反向错配时 ctx 段仍显示"
+
+# 回归：cache 不存在 + 无 token → 主流程不崩（set -u 下 FIVE_USED/WEEK_USED 未绑定的既有 bug）
+# 整条 statusline 变空是第一约定禁止的；这条测试挡该回归
+NO_CACHE="$(mktemp -u)"  # 只取路径不建文件
+output=$(STATUSLINE_PROVIDER=kimi STATUSLINE_CACHE_FILE="$NO_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
+  ANTHROPIC_AUTH_TOKEN='' KIMI_API_KEY='' MINIMAX_API_KEY='' \
+  bash "$SCRIPT_DIR/../statusline.sh" <<< "$FAKE_STDIN" 2>/dev/null)
+assert_match "$output" 'ctx' "无 cache 无 token → ctx 段仍显示（整条不变空）"
+if [[ "$output" == *"5h"* || "$output" == *"周"* ]]; then
+  FAIL=$((FAIL+1))
+  printf '  \033[31m✗\033[0m %s\n     got: %q\n' "无 cache → 5h/周 不显" "$output"
+else
+  PASS=$((PASS+1))
+  printf '  \033[32m✓\033[0m %s\n' "无 cache → 5h/周 静默省略"
 fi
 
 echo

@@ -17,7 +17,7 @@ Claude Code 状态栏脚本：实时拉配额 API（**Kimi** / MiniMax 自动识
 
 ## 功能
 
-- **双服务商**：依 `ANTHROPIC_BASE_URL` 自动识别 Kimi（`api.kimi.com/coding/v1/usages`）或 MiniMax（`/v1/token_plan/remains`），`STATUSLINE_PROVIDER=kimi|minimax` 可强制覆盖
+- **双服务商**：依 `ANTHROPIC_BASE_URL` 自动识别 Kimi（`api.kimi.com/coding/v1/usages`）或 MiniMax（`/v1/token_plan/remains`）；识别不出（如官方 Anthropic / 其他代理）则跳过配额段、不发请求。`STATUSLINE_PROVIDER=kimi|minimax` 可强制覆盖
 - **跨 session 共享缓存**：N 个 CC session 共用一份 cache，HTTP 流量降到 1/N，50s 刷新一次
 - **彩色阈值告警**：
   - 用量（ctx / 5h / 周）：≥85% 红，≥60% 黄
@@ -63,8 +63,8 @@ Claude Code 状态栏脚本：实时拉配额 API（**Kimi** / MiniMax 自动识
 ## 依赖
 
 - `bash`（3.2+，POSIX sh 不够）
-- `jq` — 解析 stdin JSON 和 API 响应
-- `curl` — 拉 MiniMax API
+- `jq` — 解析 stdin JSON、配额 API 响应（Kimi 响应的 resetTime 换算也在 jq 里做）
+- `curl` — 拉配额 API（Kimi 或 MiniMax）
 - `awk`（BSD 或 GNU 均可）
 - `stat`（macOS / Linux 都自带）
 
@@ -72,13 +72,13 @@ macOS 默认环境除 `jq` 外都齐全；用 `brew install jq` 补一个。
 
 ## 测试
 
-40+ 单测覆盖所有纯函数（colorize / format / count-piece / burn-estimate）：
+160+ 断言覆盖所有纯函数（colorize / format / count-piece / burn-estimate / time-marker / kimi 解析）：
 
 ```bash
 ./tests/run_all.sh
 ```
 
-测试用 `STATUSLINE_LIB_MODE=1 source statusline.sh` 注入函数，纯 bash + `set -u`，无外部依赖（jq/awk 在主流程里被测函数不会调用）。开发新功能时遵循 TDD：先在 `tests/test_xxx.sh` 写测试 → 跑通 → 实现。
+测试用 `STATUSLINE_LIB_MODE=1 source statusline.sh` 注入函数，纯 bash + `set -u`；kimi_fields 单测会真实调 jq（fixture 本地构造，不走网络）。开发新功能时遵循 TDD：先在 `tests/test_xxx.sh` 写测试 → 跑通 → 实现。
 
 ## 工作原理
 
