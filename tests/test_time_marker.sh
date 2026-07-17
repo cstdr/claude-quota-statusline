@@ -193,7 +193,7 @@ EOF
 
 # 场景 1：5h elapsed=60%（marker_pos=4）→ ┊ + ↑+14% 都显
 # （5h USED=74, elapsed=60, Δ=+14；周 USED=19, elapsed=50, Δ=-31）
-output=$(STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
+output=$(STATUSLINE_PROVIDER=minimax STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
   bash "$SCRIPT_DIR/../statusline.sh" <<< "$FAKE_STDIN" 2>/dev/null)
 assert_match "$output" '┊' "5h elapsed=60% → ┊ 显"
 assert_match "$output" '↑\+1[0-9]%' "5h elapsed=60% → ↑+14% 显（Δ = 74 - 60 = +14）"
@@ -214,7 +214,7 @@ cat > "$TMP_CACHE" <<'EOF'
   ]
 }
 EOF
-output=$(STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
+output=$(STATUSLINE_PROVIDER=minimax STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
   bash "$SCRIPT_DIR/../statusline.sh" <<< "$FAKE_STDIN" 2>/dev/null)
 # 5h 段：marker_pos=0 → overlay_marker 走"无 ┊"分支 → 5h 段无 ┊
 # Δ：gate 在 marker_pos，marker_pos 为空 → 5h 段无 ↑/↓
@@ -225,7 +225,7 @@ week_piece=$(echo "$output" | grep -oE '周[^·]*' || true)
 # 5h 段不应含 ┊
 if [[ "$five_piece" == *"┊"* ]]; then
   FAIL=$((FAIL+1))
-  printf '  \033[31m✗\033[0m %s\n     five_piece 含 ┊（elapsed 1-12% 不应显）\n' "5h elapsed=10% → 5h 段无 ┊" >&2
+  printf '  \033[31m✗\033[0m %s\n     five_piece 含 ┊（elapsed 1-12%% 不应显）\n' "5h elapsed=10% → 5h 段无 ┊" >&2
 else
   PASS=$((PASS+1))
   printf '  \033[32m✓\033[0m %s\n' "5h elapsed=10% → 5h 段无 ┊（marker_pos=0 gate）"
@@ -269,7 +269,7 @@ cat > "$TMP_CACHE" <<'EOF'
   ]
 }
 EOF
-output=$(STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
+output=$(STATUSLINE_PROVIDER=minimax STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
   bash "$SCRIPT_DIR/../statusline.sh" <<< "$FAKE_STDIN" 2>/dev/null)
 five_piece=$(echo "$output" | grep -oE '5h[^·]*' || true)
 # 5h 段不应含 ┊

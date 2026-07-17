@@ -3,7 +3,8 @@
 #
 # 数据源有两份：
 #   1. stdin = Claude Code 注入的 session JSON（model / context_window / session_id）
-#   2. /v1/token_plan/remains = MiniMax 5h/周配额（缓存 60s 避免频繁 HTTP）
+#   2. 配额 API = Kimi /coding/v1/usages 或 MiniMax /v1/token_plan/remains（缓存 50s 避免频繁 HTTP）
+#      依 ANTHROPIC_BASE_URL 自动识别服务商（STATUSLINE_PROVIDER 可覆盖）
 #
 # 任意一个失败都不让 statusline 变空——失败的数据源静默省略，已知字段照常显示。
 # 用 bash+jq 而非 Python：起动开销更小，符合 docs 推荐的模式。
@@ -17,15 +18,28 @@ set -u  # 不要 set -e；statusline 任何非零退出都会让整条变空
 # 便于函数输出被外部直接处理（如单测 strip_ansi 能匹配到 ESC 字节）
 RED=$'\033[31m'; YEL=$'\033[33m'; GRN=$'\033[32m'; DIM=$'\033[2m'; RST=$'\033[0m'
 
-# --- MiniMax 配额（缓存 60s；跨 session 共享） ---
-# 共享：N 个 session 共读一份 cache，1 次/分钟 HTTP 覆盖所有 session
-# 允许 STATUSLINE_CACHE_FILE 覆盖（集成测试用）
-CACHE_FILE="${STATUSLINE_CACHE_FILE:-/tmp/claude-statusline-minimax-shared}"
+# --- 服务商识别（kimi / minimax） ---
+# 依 ANTHROPIC_BASE_URL 判断配额 API 是哪家；STATUSLINE_PROVIDER 可强制覆盖（测试/调试）
+# 未知/未设 → 默认 kimi
+detect_provider() {
+  local forced="${STATUSLINE_PROVIDER:-}"
+  [[ "$forced" == "kimi" || "$forced" == "minimax" ]] && { printf '%s' "$forced"; return; }
+  case "${ANTHROPIC_BASE_URL:-}" in
+    *kimi.com*|*moonshot*) printf 'kimi' ;;
+    *minimax*)             printf 'minimax' ;;
+    *)                     printf 'kimi' ;;
+  esac
+}
+PROVIDER="$(detect_provider)"
+
+# --- 配额 API（缓存 50s；跨 session 共享） ---
+# cache/hist 按 provider 分文件：换服务商不会读到上一家的响应格式
+# 允许 STATUSLINE_CACHE_FILE / STATUSLINE_HIST_FILE 覆盖（集成测试用）
+CACHE_FILE="${STATUSLINE_CACHE_FILE:-/tmp/claude-statusline-${PROVIDER}-shared}"
 CACHE_MAX_AGE=50
 # 烧速历史：账户级（API key 代表账户），所有 session 共写一份
-# 用于推算"按现在 burn rate 还能撑多久"和 sparkline 趋势
-# 允许 STATUSLINE_HIST_FILE 覆盖（集成测试用）
-HIST_FILE="${STATUSLINE_HIST_FILE:-/tmp/claude-statusline-minimax-burn}"
+# 用于推算"按现在 burn rate 还能撑多久"
+HIST_FILE="${STATUSLINE_HIST_FILE:-/tmp/claude-statusline-${PROVIDER}-burn}"
 HIST_WINDOW_SECS=300  # 5 分钟窗口
 
 # 配额周期长度（用于算 time marker）
@@ -213,13 +227,59 @@ format_count_piece() {
   printf '%s' "$out"
 }
 
+# Kimi /coding/v1/usages → 与 MiniMax 相同的 5 字段（remaining 口径）：
+#   5h剩余% | 5h剩余ms | 周剩余% | 周剩余ms | boost(恒空，Kimi 无此概念)
+# 归一成同一契约 ⇒ 主流程下游（bar/marker/Δ/burn）零改动复用
+# stdin = API 响应 JSON；$1 = now_epoch（测试注入用，缺省取当前时间）
+# 字段一律字符串化；缺失/非法 → 空串（下游 regex 判空静默省略）
+# 5h 窗口 = limits[] 里 duration=300 TIME_UNIT_MINUTE 的项；周窗口 = usage
+kimi_fields() {
+  local now="${1:-$(date +%s)}"
+  [[ "$now" =~ ^[0-9]+$ ]] || now="$(date +%s)"
+  jq -r --argjson now "$now" '
+    def clamp_pct($p): [0, 100, $p] | sort | .[1];
+    def rem_pct($o):
+      (try (
+        (($o.limit // "0") | tonumber) as $l
+        | if $l <= 0 then ""
+          else (100 - clamp_pct((($o.used // "0") | tonumber) * 100 / $l | floor)) | tostring
+          end
+      ) catch "");
+    def reset_ms($t):
+      (try (
+        if ($t // "") == "" then ""
+        else [0, (($t | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) - $now) * 1000] | max | tostring
+        end
+      ) catch "");
+    ((.limits // [])
+      | map(select(.window.duration == 300 and .window.timeUnit == "TIME_UNIT_MINUTE"))
+      | .[0].detail // {}) as $five
+    | [
+        rem_pct($five),
+        reset_ms($five.resetTime),
+        rem_pct(.usage // {}),
+        reset_ms(.usage.resetTime),
+        ""
+      ]
+    | join("|")
+  ' 2>/dev/null
+}
+
 # ============ 有副作用的函数（依赖 $CACHE_FILE / env） ============
 
 fetch_remains() {
-  local token="${ANTHROPIC_AUTH_TOKEN:-${MINIMAX_API_KEY:-}}"
+  local token="${ANTHROPIC_AUTH_TOKEN:-}"
+  local url
+  if [[ "$PROVIDER" == "kimi" ]]; then
+    token="${token:-${KIMI_API_KEY:-}}"
+    url="${KIMI_USAGES_URL:-https://api.kimi.com/coding/v1/usages}"
+  else
+    token="${token:-${MINIMAX_API_KEY:-}}"
+    url="${MINIMAX_REMAINS_URL:-https://www.minimaxi.com/v1/token_plan/remains}"
+  fi
   [[ -z "$token" ]] && return 1
   curl -sS --max-time 3 \
-    "https://www.minimaxi.com/v1/token_plan/remains" \
+    "$url" \
     -H "Authorization: Bearer $token" \
     -H "Content-Type: application/json" 2>/dev/null
 }
@@ -271,26 +331,33 @@ if cache_is_stale; then
   fi
 fi
 
-# 一次 jq 抽 4 个字段：5h% / 5h 剩余 ms / 周% / 周 剩余 ms
+# 一次 jq 抽 5 个字段：5h剩余% / 5h剩余ms / 周剩余% / 周剩余ms / boost千分比
+# Kimi 走 kimi_fields 归一；MiniMax 走 model_remains[general]
 # 分隔符用 | 而不是 tab：bash read 在 IFS 包含 whitespace 时会先剥离前导空白，
 # 导致连续空字段塌成单个；用 join("|") 输出再以 IFS='|' 切分
 FIVE_REM=""; FIVE_RESET_MS=""; WEEK_REM=""; WEEK_RESET_MS=""; WEEK_BOOST_PERMILLE=""
-if [[ -s "$CACHE_FILE" ]] && jq -e '.model_remains | type == "array" and length > 0' "$CACHE_FILE" >/dev/null 2>&1; then
-  if IFS='|' read -r FIVE_REM FIVE_RESET_MS WEEK_REM WEEK_RESET_MS WEEK_BOOST_PERMILLE < <(
-    jq -r '
-      (.model_remains // [])
-      | map(select(.model_name=="general"))
-      | .[0] // empty
-      | [
-          (.current_interval_remaining_percent // "" | tostring),
-          (.remains_time                  // "" | tostring),
-          (.current_weekly_remaining_percent // "" | tostring),
-          (.weekly_remains_time           // "" | tostring),
-          (.weekly_boost_permille         // "" | tostring)
-        ]
-      | join("|")
-    ' "$CACHE_FILE" 2>/dev/null
-  ); then :; fi
+if [[ -s "$CACHE_FILE" ]]; then
+  if [[ "$PROVIDER" == "kimi" ]]; then
+    if IFS='|' read -r FIVE_REM FIVE_RESET_MS WEEK_REM WEEK_RESET_MS WEEK_BOOST_PERMILLE < <(
+      kimi_fields "$(date +%s)" < "$CACHE_FILE" 2>/dev/null
+    ); then :; fi
+  elif jq -e '.model_remains | type == "array" and length > 0' "$CACHE_FILE" >/dev/null 2>&1; then
+    if IFS='|' read -r FIVE_REM FIVE_RESET_MS WEEK_REM WEEK_RESET_MS WEEK_BOOST_PERMILLE < <(
+      jq -r '
+        (.model_remains // [])
+        | map(select(.model_name=="general"))
+        | .[0] // empty
+        | [
+            (.current_interval_remaining_percent // "" | tostring),
+            (.remains_time                  // "" | tostring),
+            (.current_weekly_remaining_percent // "" | tostring),
+            (.weekly_remains_time           // "" | tostring),
+            (.weekly_boost_permille         // "" | tostring)
+          ]
+        | join("|")
+      ' "$CACHE_FILE" 2>/dev/null
+    ); then :; fi
+  fi
 fi
 
 # 多 model 拆解：general 走 percent（已有逻辑），其他 model（如 video）走 count
