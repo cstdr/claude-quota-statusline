@@ -1,4 +1,4 @@
-# minimax-claude-statusline
+# claude-quota-statusline
 
 Claude Code 状态栏脚本：实时拉配额 API（**Kimi** / MiniMax 自动识别）显示 5h / 周 / ctx 用量，按燃烧率估算对话剩余时长，跨 session 共享缓存 + 彩色阈值告警。
 
