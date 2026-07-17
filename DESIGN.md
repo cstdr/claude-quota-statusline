@@ -365,7 +365,56 @@ marker_pos  = elapsed_pct × 8 / 100
 - L2：5 个显示条件显式检查（reset_ms 缺失/越界/边界/period 异常），任意失败回落到"无虚线"
 - L3：与 ctx / video 块完全解耦
 
+## 改动 9：Kimi provider 支持（从 MiniMax 切到 Kimi K3）
+
+### 问题
+
+用户把 Claude Code 的后端从 MiniMax 切到 Kimi K3（`ANTHROPIC_BASE_URL=https://api.kimi.com/coding/`），
+statusline 的 5h/周 两段全空——数据源只对 MiniMax。
+
+### 方案
+
+Kimi 有等价的配额 API：`GET https://api.kimi.com/coding/v1/usages`（Bearer token，2026-07-17 实测）：
+
+```json
+{
+  "usage":  {"limit":"100","used":"2","remaining":"98","resetTime":"2026-07-24T04:08:41.679621Z"},
+  "limits": [{"window":{"duration":300,"timeUnit":"TIME_UNIT_MINUTE"},
+              "detail":{"limit":"100","used":"11","remaining":"89","resetTime":"..."}}]
+}
+```
+
+- `usage` = 周窗口（resetTime ≈ 7 天后）；`limits[duration=300min]` = 5h 窗口——和 MiniMax 的 5h/周 模型完全同构
+- `limit/used/remaining` 都是字符串；`limit=100` 时 `used` 即已用百分比
+
+关键设计：**归一，而不是分叉**。新增纯函数 `kimi_fields()` 把 Kimi 响应归一成与 MiniMax
+完全相同的 5 字段契约（`5h剩余%|5h剩余ms|周剩余%|周剩余ms|boost`），下游渲染（bar/marker/Δ/burn）零改动：
+
+- 已用% → 剩余%：`100 - clamp(used×100/limit)`（Kimi 给 used，MiniMax 给 remaining，统一成 remaining 口径）
+- resetTime（RFC3339 带微秒 Z 的绝对时间）→ 剩余 ms：jq 内 `sub` 去微秒 → `fromdateiso8601` → 减 `$now`。
+  全程在 jq 里算，不碰 shell `date` 的 BSD/GNU 差异
+
+服务商识别 `detect_provider()`：依 `ANTHROPIC_BASE_URL`（kimi.com/moonshot → kimi，minimax → minimax），
+`STATUSLINE_PROVIDER` 可强制覆盖；cache / burn hist 按 provider 分文件，换服务商不串格式。
+
+### 取舍
+
+- **保留 MiniMax 路径**（自动识别）而不是硬切换：换回去不用改代码，两家用户都能用。
+  代价是老集成测试 fixture 要显式钉 `STATUSLINE_PROVIDER=minimax`（本机 env 已是 kimi）。
+- **不显示 `parallel`（并发 1/20）和 `totalQuota`**：和"额度还够烧多久"无关（"用得上吗"自检）。
+- **用 `used/limit×100` 而非直接信 `remaining` 字段**：对非 100 的 limit 鲁棒。
+- **remaining clamp [0,100]**：`used>limit`（超用）时 bar 不溢出。
+- **未知 URL 默认 kimi**：调用方主要是本仓库用户，当前后端就是 kimi；错了也只是静默省略，不炸。
+
+### 防御层级
+
+- L1：`kimi_fields` 纯函数（jq + 注入 `now_epoch`），`tests/test_kimi.sh` 24 断言
+  （正常/clamp/字段缺失/resetTime 过去/非法/垃圾 JSON/非 300min 窗口）
+- L2：每个字段独立 `try/catch` 降级；整段 JSON 非法 → 全空 → piece 静默省略
+- L3：provider 错配（minimax provider + kimi cache）→ 解析为空 → 静默省略，不串渲染
+
 ## 踩过的坑（值得在博客里点出来）
+
 
 ### 坑 1：`@tsv` + `IFS=$'\t' read` 看似合理实则错
 
