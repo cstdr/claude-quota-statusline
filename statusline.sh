@@ -340,11 +340,17 @@ else
 fi
 
 if cache_is_stale; then
+  echo "[DEBUG] cache_is_stale=true, calling fetch_remains" >&2
   if data=$(fetch_remains); then
+    echo "[DEBUG] fetch_remains OK, data_len=${#data}" >&2
     # 用 mktemp，避开并发 statusline 实例共享 .tmp 的竞态
     tmp=$(mktemp "${CACHE_FILE}.XXXXXX")
     printf '%s' "$data" > "$tmp" 2>/dev/null && mv "$tmp" "$CACHE_FILE"
+  else
+    echo "[DEBUG] fetch_remains FAILED" >&2
   fi
+else
+  echo "[DEBUG] cache_is_stale=false, skip fetch" >&2
 fi
 
 # 一次 jq 抽 5 个字段：5h剩余% / 5h剩余ms / 周剩余% / 周剩余ms / boost千分比
