@@ -176,7 +176,11 @@ cat > "$TMP_CACHE" <<EOF
 EOF
 
 output=$(STATUSLINE_PROVIDER=kimi STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
+  bash "$SCRIPT_DIR/../statusline.sh" <<< "$FAKE_STDIN" 2>&1 1>/dev/null | grep -E "DEBUG|input")
+output_real=$(STATUSLINE_PROVIDER=kimi STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
   bash "$SCRIPT_DIR/../statusline.sh" <<< "$FAKE_STDIN" 2>/dev/null)
+echo "[DEBUG test harness] stderr_capture=$(echo "$output" | head -1)"
+output="$output_real"
 
 assert_match "$output" 'k3' "model 名显示"
 five_piece=$(echo "$output" | grep -oE '5h[^·]*' || true)
