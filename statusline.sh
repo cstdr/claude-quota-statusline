@@ -300,9 +300,15 @@ cache_is_stale() {
   # 清掉上轮被 SIGKILL 留下的 .tmp，避免下次 fetch 永远拿不到 $CACHE_FILE
   rm -f "$CACHE_FILE.tmp.$$" 2>/dev/null
   [[ ! -s "$CACHE_FILE" ]] && return 0
-  local mtime
-  mtime=$(stat -f %m "$CACHE_FILE" 2>/dev/null || stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0)
-  (( $(date +%s) - mtime > CACHE_MAX_AGE ))
+  local mtime now
+  # 跨 BSD/GNU stat：先试 BSD (-f %m)，输出不是数字再试 GNU (-c %Y)
+  # GNU stat 的 -f 不是 BSD 语义（= 显示 filesystem status），会"成功"返回多行信息，
+  # 不触发 || fallback，所以必须校验输出是不是数字
+  mtime=$(stat -f %m "$CACHE_FILE" 2>/dev/null)
+  [[ "$mtime" =~ ^[0-9]+$ ]] || mtime=$(stat -c %Y "$CACHE_FILE" 2>/dev/null)
+  [[ "$mtime" =~ ^[0-9]+$ ]] || mtime=0
+  now=$(date +%s)
+  (( now - mtime > CACHE_MAX_AGE ))
 }
 
 # ============ lib 模式（source 用于单测）============
