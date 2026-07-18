@@ -179,7 +179,9 @@ output=$(STATUSLINE_PROVIDER=kimi STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_
   bash "$SCRIPT_DIR/../statusline.sh" <<< "$FAKE_STDIN" 2>&1 1>/dev/null | grep -E "DEBUG|input")
 output_real=$(STATUSLINE_PROVIDER=kimi STATUSLINE_CACHE_FILE="$TMP_CACHE" STATUSLINE_HIST_FILE="$TMP_HIST" \
   bash "$SCRIPT_DIR/../statusline.sh" <<< "$FAKE_STDIN" 2>/dev/null)
-echo "[DEBUG test harness] stderr_capture=$(echo "$output" | head -1)"
+echo "=== STDERR DUMP (line by line) ==="
+echo "$output" | sed 's/^/  /'
+echo "=== END STDERR ==="
 output="$output_real"
 
 assert_match "$output" 'k3' "model 名显示"
