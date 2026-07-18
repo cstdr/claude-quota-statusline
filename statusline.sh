@@ -299,10 +299,17 @@ fetch_remains() {
 cache_is_stale() {
   # 清掉上轮被 SIGKILL 留下的 .tmp，避免下次 fetch 永远拿不到 $CACHE_FILE
   rm -f "$CACHE_FILE.tmp.$$" 2>/dev/null
-  [[ ! -s "$CACHE_FILE" ]] && return 0
+  echo "[DEBUG-cache] A" >&2
+  [[ ! -s "$CACHE_FILE" ]] && { echo "[DEBUG-cache] B (empty, return 0)" >&2; return 0; }
+  echo "[DEBUG-cache] C (file exists)" >&2
   local mtime
+  echo "[DEBUG-cache] D (about to stat)" >&2
   mtime=$(stat -f %m "$CACHE_FILE" 2>/dev/null || stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0)
-  (( $(date +%s) - mtime > CACHE_MAX_AGE ))
+  echo "[DEBUG-cache] E (mtime=$mtime)" >&2
+  local now
+  now=$(date +%s)
+  echo "[DEBUG-cache] F (now=$now, mtime=$mtime, age=$(( now - mtime )))" >&2
+  (( now - mtime > CACHE_MAX_AGE ))
 }
 
 # ============ lib 模式（source 用于单测）============
