@@ -11,7 +11,6 @@
 #
 # Source 模式：STATUSLINE_LIB_MODE=1 source 此文件，只定义函数不跑主流程，给单测用。
 
-set -x
 set -u  # 不要 set -e；statusline 任何非零退出都会让整条变空
 
 # ============ 全局常量 ============
@@ -312,6 +311,7 @@ cache_is_stale() {
 
 # ============ 主流程 ============
 input=$(cat)
+{ echo "=== input ==="; printf '%s\n' "$input"; echo "=== input len: ${#input} ==="; } >> /tmp/STATUSLINE_DEBUG.txt 2>&1
 MODEL=$(printf '%s' "$input" | jq -r '.model.display_name // "?"')
 
 # 一次 jq 抽 3 个字段：used_tokens / max_tokens / used_percentage 兜底
@@ -484,4 +484,5 @@ OUTPUT="[${MODEL}] ${DIM}ctx${RST} ${CTX_COL}${CTX_BAR} ${CTX_PCT_INT}%"
 [[ -n "$FIVE_PIECE" ]] && OUTPUT="${OUTPUT} · ${FIVE_PIECE}"
 [[ -n "$WEEK_PIECE" ]] && OUTPUT="${OUTPUT} · ${WEEK_PIECE}"
 [[ -n "$VIDEO_PIECE" ]] && OUTPUT="${OUTPUT} · ${VIDEO_PIECE}"
+printf '%b\n' "$OUTPUT" > /tmp/STATUSLINE_DEBUG.txt
 printf '%b\n' "$OUTPUT"
