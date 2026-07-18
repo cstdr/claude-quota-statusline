@@ -1,0 +1,36 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: run tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install jq (ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: install jq (macos)
+        if: runner.os == 'macOS'
+        run: brew install jq
+
+      - name: show tool versions
+        run: |
+          bash --version | head -1
+          jq --version
+
+      - name: run tests
+        run: ./tests/run_all.sh
