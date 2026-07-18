@@ -11,6 +11,13 @@
 # brainstorm visual companion 临时产物
 .superpowers/
 
+# 内部草稿 / agent 规划（不入库）
+drafts/
+docs/superpowers/
+
 # 真实环境变量（仅 .env.example 入库）
 .env
 .env.local
+
+# 运行时缓存 / 烧速历史（statusline 运行时生成）
+/tmp/claude-statusline-*
