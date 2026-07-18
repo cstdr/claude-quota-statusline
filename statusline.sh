@@ -11,6 +11,7 @@
 #
 # Source 模式：STATUSLINE_LIB_MODE=1 source 此文件，只定义函数不跑主流程，给单测用。
 
+set -x
 set -u  # 不要 set -e；statusline 任何非零退出都会让整条变空
 
 # ============ 全局常量 ============
