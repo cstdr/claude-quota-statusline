@@ -299,16 +299,15 @@ fetch_remains() {
 cache_is_stale() {
   # 清掉上轮被 SIGKILL 留下的 .tmp，避免下次 fetch 永远拿不到 $CACHE_FILE
   rm -f "$CACHE_FILE.tmp.$$" 2>/dev/null
-  echo "[DEBUG-cache] A" >&2
-  [[ ! -s "$CACHE_FILE" ]] && { echo "[DEBUG-cache] B (empty, return 0)" >&2; return 0; }
-  echo "[DEBUG-cache] C (file exists)" >&2
-  local mtime
-  echo "[DEBUG-cache] D (about to stat)" >&2
-  mtime=$(stat -f %m "$CACHE_FILE" 2>/dev/null || stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0)
-  echo "[DEBUG-cache] E (mtime=$mtime)" >&2
-  local now
+  [[ ! -s "$CACHE_FILE" ]] && return 0
+  local mtime now
+  # 跨 BSD/GNU stat：先试 BSD (-f %m)，输出不是数字再试 GNU (-c %Y)
+  # GNU stat 的 -f 不是 BSD 语义（= 显示 filesystem status），会"成功"返回多行信息，
+  # 不触发 || fallback，所以必须校验输出是不是数字
+  mtime=$(stat -f %m "$CACHE_FILE" 2>/dev/null)
+  [[ "$mtime" =~ ^[0-9]+$ ]] || mtime=$(stat -c %Y "$CACHE_FILE" 2>/dev/null)
+  [[ "$mtime" =~ ^[0-9]+$ ]] || mtime=0
   now=$(date +%s)
-  echo "[DEBUG-cache] F (now=$now, mtime=$mtime, age=$(( now - mtime )))" >&2
   (( now - mtime > CACHE_MAX_AGE ))
 }
 
@@ -318,11 +317,7 @@ cache_is_stale() {
 
 # ============ 主流程 ============
 input=$(cat)
-{ echo "=== input ==="; printf '%s\n' "$input"; echo "=== input len: ${#input} ==="; } >> /tmp/STATUSLINE_DEBUG.txt 2>&1
-echo "[DEBUG-EARLY] stdin read, input_len=${#input}" >&2
 MODEL=$(printf '%s' "$input" | jq -r '.model.display_name // "?"')
-echo "[DEBUG-EARLY] MODEL=$MODEL" >&2
-echo "[DEBUG-EARLY] about to call cache_is_stale; CACHE_FILE=$CACHE_FILE; PROVIDER=$PROVIDER" >&2
 
 # 一次 jq 抽 3 个字段：used_tokens / max_tokens / used_percentage 兜底
 # 注意：CC 右下角的 "X% context used" 用的是 used/max_tokens（max 是给输入的预算）
@@ -347,17 +342,11 @@ else
 fi
 
 if cache_is_stale; then
-  echo "[DEBUG] cache_is_stale=true, calling fetch_remains" >&2
   if data=$(fetch_remains); then
-    echo "[DEBUG] fetch_remains OK, data_len=${#data}" >&2
     # 用 mktemp，避开并发 statusline 实例共享 .tmp 的竞态
     tmp=$(mktemp "${CACHE_FILE}.XXXXXX")
     printf '%s' "$data" > "$tmp" 2>/dev/null && mv "$tmp" "$CACHE_FILE"
-  else
-    echo "[DEBUG] fetch_remains FAILED" >&2
   fi
-else
-  echo "[DEBUG] cache_is_stale=false, skip fetch" >&2
 fi
 
 # 一次 jq 抽 5 个字段：5h剩余% / 5h剩余ms / 周剩余% / 周剩余ms / boost千分比
@@ -500,7 +489,4 @@ OUTPUT="[${MODEL}] ${DIM}ctx${RST} ${CTX_COL}${CTX_BAR} ${CTX_PCT_INT}%"
 [[ -n "$FIVE_PIECE" ]] && OUTPUT="${OUTPUT} · ${FIVE_PIECE}"
 [[ -n "$WEEK_PIECE" ]] && OUTPUT="${OUTPUT} · ${WEEK_PIECE}"
 [[ -n "$VIDEO_PIECE" ]] && OUTPUT="${OUTPUT} · ${VIDEO_PIECE}"
-printf '%b\n' "$OUTPUT" > /tmp/STATUSLINE_DEBUG.txt
-# DEBUG: 关键变量 dump（CI 看 stdout）
-printf '\n[DEBUG] INPUT_LEN=%s MODEL=%q FIVE_REM=%s WEEK_REM=%s FIVE_USED=%s WEEK_USED=%s\n' "${#input}" "$MODEL" "$FIVE_REM" "$WEEK_REM" "$FIVE_USED" "$WEEK_USED" >&2
 printf '%b\n' "$OUTPUT"
