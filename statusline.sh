@@ -312,7 +312,10 @@ cache_is_stale() {
 # ============ 主流程 ============
 input=$(cat)
 { echo "=== input ==="; printf '%s\n' "$input"; echo "=== input len: ${#input} ==="; } >> /tmp/STATUSLINE_DEBUG.txt 2>&1
+echo "[DEBUG-EARLY] stdin read, input_len=${#input}" >&2
 MODEL=$(printf '%s' "$input" | jq -r '.model.display_name // "?"')
+echo "[DEBUG-EARLY] MODEL=$MODEL" >&2
+echo "[DEBUG-EARLY] about to call cache_is_stale; CACHE_FILE=$CACHE_FILE; PROVIDER=$PROVIDER" >&2
 
 # 一次 jq 抽 3 个字段：used_tokens / max_tokens / used_percentage 兜底
 # 注意：CC 右下角的 "X% context used" 用的是 used/max_tokens（max 是给输入的预算）
